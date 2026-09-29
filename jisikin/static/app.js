@@ -8,7 +8,7 @@ const state = {
   kinView: "feed", // 지식iN 탭에서 마지막으로 본 화면
   product: "", category: "", status: "todo", sort: "priority",
   unanswered: false, low: false, q: "", expUnanswered: false,
-  sStatus: "todo", sSort: "priority", ytSort: "views", sLow: false, sQ: "",
+  sStatus: "todo", sSort: "priority", ytSort: "views", ytKind: "", sLow: false, sQ: "",
 };
 const PLATFORM_NAMES = { youtube: "유튜브", threads: "쓰레드" };
 // 유튜브는 조회수 많은 순(= 사람들이 많이 보는 영상)이 기본
@@ -132,6 +132,7 @@ function renderViews() {
   $("#feed-toolbar").hidden = state.view !== "feed";
   $("#exp-toolbar").hidden = state.view !== "exposure";
   $("#social-toolbar").hidden = !isSocial();
+  $("#s-kind").hidden = state.view !== "youtube";
   if (isSocial()) {
     const sel = $("#s-sort");
     const opts = SORT_OPTIONS[state.view];
@@ -334,7 +335,7 @@ function cardHtml(q) {
       </a>
       ${snippet ? `<p class="snippet">${highlight(snippet, terms)}</p>` : ""}
       <div class="meta">
-        ${p ? `<span class="badge product">${esc(p.name)}</span>` : `<span class="badge">관련도 낮음${lowProduct ? " · " + esc(lowProduct.name) : ""}</span>`}
+        ${productBadge(p, lowProduct)}
         ${cats.map((c) => `<span class="badge">${esc(c)}</span>`).join("")}
         ${ansBadge}
         ${q.reward ? `<span class="badge">내공 ${q.reward}</span>` : ""}
@@ -347,6 +348,12 @@ function cardHtml(q) {
     </div>
     <div class="actions">${actionsHtml(q)}</div>
   </article>`;
+}
+
+// 제품 탭을 골랐으면 카드마다 제품명을 또 보여주지 않음 (카드 왼쪽 색 띠로 구분)
+function productBadge(p, lowProduct) {
+  if (!p) return `<span class="badge">관련도 낮음${lowProduct && !state.product ? " · " + esc(lowProduct.name) : ""}</span>`;
+  return state.product ? "" : `<span class="badge product">${esc(p.name)}</span>`;
 }
 
 function statusLabel(q, social) {
@@ -402,6 +409,7 @@ async function loadSocial() {
   const params = new URLSearchParams({
     platform: view, product: state.product, category: state.category, status: state.sStatus,
     sort: state[sortKey()],
+    shorts: view === "youtube" ? state.ytKind : "",
     include_low: state.sLow ? "1" : "", q: state.sQ,
   });
   const data = await api("/api/social?" + params);
@@ -420,6 +428,13 @@ function compactNum(n) {
   if (n >= 100000000) return `${(n / 100000000).toFixed(1).replace(/\.0$/, "")}억`;
   if (n >= 10000) return `${(n / 10000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, "")}만`;
   return num(n);
+}
+
+function durationText(sec) {
+  if (sec == null) return "";
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const mm = h ? String(m).padStart(2, "0") : m;
+  return `${h ? h + ":" : ""}${mm}:${String(s).padStart(2, "0")}`;
 }
 
 function socialCardHtml(q) {
@@ -448,14 +463,14 @@ function socialCardHtml(q) {
   const author = q.author ? (q.author_url ? `<a href="${esc(q.author_url)}" target="_blank" rel="noopener">${yt ? "" : "@"}${esc(q.author)}</a>` : esc(q.author)) : "";
   return `
   <article class="card social ${yt ? "yt" : "th"} ${low ? "low" : ""} ${q.status === "opened" ? "opened" : ""}" data-kind="social" data-id="${esc(q.post_id)}" style="${color ? `--c:${esc(color)}` : ""}">
-    ${yt && q.thumbnail ? `<a class="thumb" href="${esc(q.url)}" target="_blank" rel="noopener" data-open><img src="${esc(q.thumbnail)}" alt="" loading="lazy"></a>` : ""}
+    ${yt && q.thumbnail ? `<a class="thumb" href="${esc(q.url)}" target="_blank" rel="noopener" data-open><img src="${esc(q.thumbnail)}" alt="" loading="lazy">${q.duration ? `<span class="dur">${durationText(q.duration)}</span>` : ""}</a>` : ""}
     <div class="card-main">
       <a class="title" href="${esc(q.url)}" target="_blank" rel="noopener" data-open>
-        ${isNew ? '<span class="new-badge">NEW</span>' : ""}${highlight(title || "(내용 없음)", terms)}
+        ${isNew ? '<span class="new-badge">NEW</span>' : ""}${q.is_short ? '<span class="shorts-badge">숏츠</span>' : ""}${highlight(title || "(내용 없음)", terms)}
       </a>
       ${body.trim() ? `<p class="snippet">${highlight(body.trim(), terms)}</p>` : ""}
       <div class="meta">
-        ${p ? `<span class="badge product">${esc(p.name)}</span>` : `<span class="badge">관련도 낮음${lowProduct ? " · " + esc(lowProduct.name) : ""}</span>`}
+        ${productBadge(p, lowProduct)}
         ${cats.map((c) => `<span class="badge">${esc(c)}</span>`).join("")}
         ${stats}
         ${author ? `<span>${author}</span>` : ""}
@@ -559,7 +574,7 @@ function renderExposure(groups) {
     <section class="kw-group" style="${p ? `--c:${esc(p.color)}` : ""}">
       <header class="kw-head">
         <h3><a href="https://search.naver.com/search.naver?query=${encodeURIComponent(g.keyword)}" target="_blank" rel="noopener" title="네이버에서 직접 검색해 보기">${esc(g.keyword)}</a></h3>
-        ${p ? `<span class="badge product">${esc(p.name)}</span>` : ""}
+        ${p && !state.product ? `<span class="badge product">${esc(p.name)}</span>` : ""}
         <span class="muted">확인 ${relTime(g.checked_at)}</span>
         <span class="srcs">${srcs}</span>
       </header>
@@ -769,6 +784,7 @@ function bindFilter(sel, key, isCheck) {
     saveFilters();
     loadList();
   });
+  bindFilter("#s-kind", "ytKind");
   bindFilter("#s-low", "sLow", true);
   bindFilter("#s-q", "sQ");
   if (!["feed", "exposure", "youtube", "threads"].includes(state.view)) state.view = "feed";

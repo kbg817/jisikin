@@ -14,6 +14,7 @@ from jisikin.social import (
     YouTubeClient,
     collect_social,
     maybe_refresh_threads_token,
+    parse_duration,
     social_matcher,
 )
 from jisikin.storage import Store, now_kst
@@ -33,9 +34,14 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, responses):
+    def __init__(self, responses, heads=None):
         self.responses = list(responses)
+        self.heads = heads or {}
         self.calls = []
+
+    def head(self, url, allow_redirects=True, timeout=None):
+        self.calls.append((url, None))
+        return FakeResponse(self.heads.get(url, 404), {})
 
     def get(self, url, params=None, timeout=None):
         self.calls.append((url, params))
@@ -149,7 +155,8 @@ class FakeClient:
 
 
 def _post(pid, platform="youtube", title="", body="", **kw):
-    return SocialPost(platform=platform, post_id=pid, url=f"https://example.com/{pid}", title=title, body=body,
+    kw.setdefault("url", f"https://example.com/{pid}")
+    return SocialPost(platform=platform, post_id=pid, title=title, body=body,
                       published_at=now_kst() - timedelta(hours=2), **kw)
 
 
@@ -277,3 +284,61 @@ def test_collect_social_uses_platform_age_and_youtube_order(tmp_path, example_cf
     assert round((now_kst() - seen["youtube"]).days) in (s.youtube_max_age_days - 1, s.youtube_max_age_days)
     assert round((now_kst() - seen["threads"]).days) in (s.social_max_age_days - 1, s.social_max_age_days)
     assert YouTubeClient("K", order="viewCount").order == "viewCount"
+
+
+def test_parse_duration():
+    assert parse_duration("PT45S") == 45
+    assert parse_duration("PT1M5S") == 65
+    assert parse_duration("PT1H2M3S") == 3723
+    assert parse_duration("P0D") == 0
+    assert parse_duration("") is None and parse_duration(None) is None and parse_duration("P") is None
+
+
+def test_youtube_detects_shorts(tmp_path):
+    search = {"items": [
+        {"id": {"videoId": v}, "snippet": {"publishedAt": "2026-09-29T10:00:00Z", "title": v}} for v in ("s1", "s2", "long", "unk")
+    ]}
+    videos = {"items": [
+        {"id": "s1", "contentDetails": {"duration": "PT40S"}, "statistics": {}},
+        {"id": "s2", "contentDetails": {"duration": "PT2M"}, "statistics": {}},     # 2분이지만 일반 영상
+        {"id": "long", "contentDetails": {"duration": "PT12M"}, "statistics": {}},
+        {"id": "unk", "contentDetails": {"duration": "PT50S"}, "statistics": {}},   # 확인 실패 → 길이로 판단
+    ]}
+    shorts = "https://www.youtube.com/shorts/{}"
+    session = FakeSession([FakeResponse(200, search), FakeResponse(200, videos)],
+                          heads={shorts.format("s1"): 200, shorts.format("s2"): 303, shorts.format("unk"): 500})
+    posts = {p.post_id: p for p in YouTubeClient("KEY", session=session).search("x", now_kst(), 5)}
+    assert [(posts[k].is_short, posts[k].duration) for k in ("yt:s1", "yt:s2", "yt:long", "yt:unk")] == [
+        (True, 40), (False, 120), (False, 720), (True, 50)]
+    assert posts["yt:s1"].url == shorts.format("s1") and "watch?v=long" in posts["yt:long"].url
+    assert "contentDetails" in session.calls[1][1]["part"]
+    assert not any(url == shorts.format("long") for url, _ in session.calls)  # 긴 영상은 확인하지 않음
+
+
+def test_shorts_filter_and_update(web):
+    state, client = web
+    state.store.upsert_social(_post("yt:9", title="닥사렌 숏츠", url="https://www.youtube.com/shorts/9",
+                                    duration=30, is_short=True), "닥사렌")
+    state.store.classify_social(social_matcher(state.cfg))
+    ids = lambda qs: [i["post_id"] for i in client.get("/api/social?platform=youtube" + qs).get_json()["items"]]
+    assert set(ids("")) == {"yt:1", "yt:9"}
+    assert ids("&shorts=only") == ["yt:9"]
+    assert ids("&shorts=exclude") == ["yt:1"]
+    item = next(i for i in client.get("/api/social?platform=youtube&shorts=only").get_json()["items"])
+    assert item["is_short"] == 1 and item["duration"] == 30
+    # 예전에 저장된 영상도 다시 찾으면 숏츠 정보와 숏츠 주소가 채워짐
+    state.store.upsert_social(_post("yt:1", title="닥사렌 후기", url="https://www.youtube.com/shorts/1", duration=20, is_short=True), "닥사렌")
+    post = state.store.get_social("yt:1")
+    assert post["is_short"] == 1 and post["url"].endswith("/shorts/1")
+
+
+def test_old_db_gets_shorts_columns(tmp_path):
+    import sqlite3
+    db = tmp_path / "db.sqlite"
+    Store(db)
+    with sqlite3.connect(db) as c:  # 숏츠 열이 없던 예전 DB 흉내
+        c.execute("ALTER TABLE social_posts DROP COLUMN is_short")
+        c.execute("ALTER TABLE social_posts DROP COLUMN duration")
+    store = Store(db)
+    store.upsert_social(_post("yt:1", title="x", duration=10, is_short=True), "q")
+    assert store.get_social("yt:1")["is_short"] == 1
