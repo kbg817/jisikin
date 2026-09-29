@@ -23,8 +23,9 @@ from .config import AppConfig, ConfigError
 from .diagnose import run_diagnostics
 from .drafter import DraftError, ai_status, generate_draft
 from .exposure import all_targets, check_exposure
-from .keywords import SOURCE_LABELS, due_products, generate_for_product, save_seed_settings, seed_settings
+from .keywords import SOURCE_LABELS, due_products, ensure_default_seeds, generate_for_product, save_seed_settings, seed_settings
 from .matcher import Matcher
+from .migrations import migrate_config
 from .searchad import compact
 from .storage import STATUSES, TODO_STATUSES, ApiBudget, Store, iso, now_kst
 
@@ -36,13 +37,15 @@ class AppState:
         self.config_path = Path(config_path)
         self.env_path = Path(env_path) if env_path else config_mod.ENV_PATH
         self.data_dir = Path(data_dir) if data_dir else Path(db_path).parent if str(db_path) != ":memory:" else config_mod.DATA_DIR
-        self.cfg: AppConfig = config_mod.load_config(self.config_path)
+        self.logs: deque[str] = deque(maxlen=300)
         self.store = Store(db_path)
+        migrate_config(self.config_path, self.store, log=self.log)  # 예전에 복사한 config.yaml 에 새 제품 등 반영 (한 번만)
+        self.cfg: AppConfig = config_mod.load_config(self.config_path)
+        self._default_seeds()
         self.running = False
         self.running_kind = ""  # collect / exposure / keywords
         self.next_run_at: datetime | None = None
         self.next_exposure_at: datetime | None = None
-        self.logs: deque[str] = deque(maxlen=300)
         self._run_lock = threading.Lock()
         self._wake = threading.Event()
         self._force = False
@@ -58,10 +61,16 @@ class AppState:
         self.logs.append(line)
         print(line, flush=True)
 
+    def _default_seeds(self) -> None:
+        added = ensure_default_seeds(self.cfg, self.store)
+        if added:
+            self.log(f"메인 키워드 기본값 등록: {', '.join(added)} — 세부 검색어를 자동으로 만듭니다")
+
     # --- 설정
     def save_config(self, text: str) -> AppConfig:
         cfg = config_mod.save_config_text(text, self.config_path)
         self.cfg = cfg
+        self._default_seeds()  # 새로 넣은 제품의 exposure.seeds
         n = self.store.classify(Matcher(cfg.products))
         self.log(f"설정 저장 — 전체 재분류 완료 (관련 질문 {n}건)")
         self._wake.set()  # 수집 주기 변경 반영
@@ -167,7 +176,9 @@ class AppState:
             if pid not in self._pending_keywords:
                 self._pending_keywords.append(pid)
         while self._pending_keywords and not self._stop.is_set():
-            self.run_keywords(self._pending_keywords.pop(0))
+            res = self.run_keywords(self._pending_keywords.pop(0))
+            if res is not None and res.candidates:
+                self._force_exposure = True  # 새 검색어로 바로 상위노출 확인
 
         # 3) 상위노출 확인
         hours = self.exposure_interval_hours()
@@ -464,6 +475,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                     "min_volume": s["min_volume"],
                     "generated_at": s["generated_at"],
                     "last_error": s["last_error"],
+                    "used": [SOURCE_LABELS.get(x, x) for x in s["used"]],
                     "config_keywords": [
                         {"keyword": kw, "exposure": exposure.get((p.id, kw))} for kw in p.exposure.queries()
                     ],

@@ -44,8 +44,9 @@ async function load() {
   }
   render();
   const busy = data.running || data.pending.length;
+  const waiting = data.products.some((p) => p.seeds.length && !p.generated_at);  // 수집이 끝나면 만들 예정
   clearTimeout(pollTimer);
-  if (busy) pollTimer = setTimeout(load, 3000);
+  if (busy || waiting) pollTimer = setTimeout(load, busy ? 3000 : 10000);
 }
 
 function render() {
@@ -99,7 +100,10 @@ function render() {
       <button class="btn primary" id="kw-save" ${busy ? "disabled" : ""}>${busy ? "생성 중…" : "저장하고 자동 생성"}</button>
       <div class="muted kw-meta">
         ${busy ? "<b>검색어를 만드는 중입니다… (1분 정도, 끝나면 상위노출 확인까지 이어서 합니다)</b>" :
-          p.generated_at ? `마지막 생성 ${relTime(p.generated_at)} · 7일마다 자동으로 다시 생성` : "아직 생성 전"}
+          p.generated_at ? `마지막 생성 ${relTime(p.generated_at)}${p.used.length ? ` (사용: ${esc(p.used.join(" · "))})` : ""} · 7일마다 자동으로 다시 생성` :
+          p.seeds.length ? "곧 자동으로 만듭니다 (수집이 끝난 뒤 차례로)" : "아직 생성 전"}
+        ${!busy && p.generated_at && data.sources.searchad && !p.used.includes("검색광고") && !p.last_error
+          ? "<br>검색광고 키가 등록되어 월간 검색수로 곧 다시 만듭니다." : ""}
         ${p.last_error ? `<br><span class="err">일부 실패: ${esc(p.last_error)}</span>` : ""}
       </div>
     </div>

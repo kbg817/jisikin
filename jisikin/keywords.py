@@ -12,13 +12,14 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Callable
 
-from .config import AppConfig, Product, naver_credentials, searchad_credentials
+from .config import EXAMPLE_CONFIG_PATH, AppConfig, ConfigError, Product, load_config, naver_credentials, searchad_credentials
 from .drafter import DraftError, ai_status, ask_claude
 from .matcher import Matcher
 from .naver import NaverClient, NaverError
-from .searchad import SearchAdClient, compact
+from .searchad import SearchAdClient, compact, hint_key
 from .storage import Store, iso, now_kst
 
 SOURCE_LABELS = {
@@ -90,7 +91,36 @@ def seed_settings(store: Store, product_id: str) -> dict:
         "min_volume": DEFAULT_MIN_VOLUME if min_volume is None else int(min_volume),
         "generated_at": data.get("generated_at"),
         "last_error": data.get("last_error"),
+        "used": list(data.get("used") or []),  # 마지막 생성 때 실제로 쓴 출처
+        "searchad_tried": bool(data.get("searchad_tried")),
     }
+
+
+@lru_cache(maxsize=1)
+def _example_products() -> dict[str, Product]:
+    try:
+        return {p.id: p for p in load_config(EXAMPLE_CONFIG_PATH).products}
+    except (ConfigError, OSError):
+        return {}
+
+
+def default_seeds(product: Product) -> list[str]:
+    """설정의 exposure.seeds. 예전에 복사한 config.yaml 에는 없으므로, 같은 제품이면 예시 설정 값을 쓴다."""
+    if product.exposure.seeds:
+        return list(product.exposure.seeds)
+    ex = _example_products().get(product.id)
+    return list(ex.exposure.seeds) if ex and ex.name == product.name else []
+
+
+def ensure_default_seeds(cfg: AppConfig, store: Store) -> list[str]:
+    """메인 키워드를 한 번도 저장한 적 없는 제품에 기본 메인 키워드를 넣는다. (화면에서 비우면 그대로 둠)"""
+    added = []
+    for p in cfg.products:
+        seeds = default_seeds(p)
+        if seeds and store.kv_get(f"seeds:{p.id}") is None:
+            save_seed_settings(store, p.id, seeds, DEFAULT_MAX)
+            added.append(p.name)
+    return added
 
 
 def save_seed_settings(store: Store, product_id: str, seeds: list[str], max_n: int, min_volume: int | None = None) -> dict:
@@ -192,10 +222,24 @@ def expand(
 
     # 4) 검색광고 API: 연관 키워드 + 월간 검색수
     if ad_client:
+        ad_errors: list[str] = []
+
+        def ad_stats(hints: list[str]) -> list[dict] | None:
+            try:
+                rows = ad_client.keyword_stats(hints)
+                used.add("searchad")
+                return rows
+            except NaverError as e:
+                if str(e) not in ad_errors:
+                    ad_errors.append(str(e))
+                    log(f"  ! 검색광고 API 실패: {e}")
+                if e.fatal:
+                    raise
+                return None
+
         try:
             for i in range(0, len(seeds), 5):
-                rows = ad_client.keyword_stats(seeds[i : i + 5])
-                used.add("searchad")
+                rows = ad_stats(seeds[i : i + 5]) or []
                 rows = [r for r in rows if relevant(r["keyword"])]
                 rows.sort(key=lambda r: (r["pc"] or 0) + (r["mobile"] or 0), reverse=True)
                 for r in rows[:50]:
@@ -208,13 +252,16 @@ def expand(
             unknown = unknown[:MAX_VOLUME_LOOKUPS]
             for i in range(0, len(unknown), 5):
                 batch = unknown[i : i + 5]
-                stats = {compact(r["keyword"]): r for r in ad_client.keyword_stats([c.keyword for c in batch])}
+                rows = ad_stats([c.keyword for c in batch])
+                if rows is None:
+                    continue  # 이 묶음만 실패 — 검색수 모름으로 둠
+                stats = {hint_key(r["keyword"]): r for r in rows}
                 for c in batch:
-                    r = stats.get(compact(c.keyword))
+                    r = stats.get(hint_key(c.keyword))
                     c.pc, c.mobile = (r["pc"], r["mobile"]) if r else (0, 0)
-        except NaverError as e:
-            res.errors.append(f"검색광고 API: {e}")
-            log(f"  ! 검색광고 API 실패: {e}")
+        except NaverError:
+            pass  # 인증 실패 등 — 더 부르지 않음 (오류는 위에서 기록)
+        res.errors.extend(f"검색광고 API: {e}" for e in ad_errors[:2])
 
     cands = [c for c in pool.values() if relevant(c.keyword)]
     if any(c.volume is not None for c in cands):
@@ -257,22 +304,31 @@ def generate_for_product(
             settings["max"],
             settings["min_volume"],
         )
-    settings.update(generated_at=iso(now_kst()), last_error="; ".join(res.errors[:3]) or None)
+    settings.update(
+        generated_at=iso(now_kst()),
+        last_error="; ".join(res.errors[:3]) or None,
+        used=res.used,
+        searchad_tried=ad_client is not None,
+    )
     store.kv_set(f"seeds:{product_id}", settings)
     return res
 
 
 def due_products(cfg: AppConfig, store: Store, now=None) -> list[str]:
-    """메인 키워드가 있는데 한 번도 생성 안 했거나 REFRESH_DAYS 가 지난 제품."""
+    """다시 만들어야 하는 제품: 메인 키워드가 있는데
+    - 한 번도 생성 안 했거나 REFRESH_DAYS 가 지났거나
+    - 검색광고 키가 생겼는데 마지막 생성 때는 검색광고 API 를 쓰지 않은 경우 (키 저장 전에 만든 목록)
+    """
     from .storage import from_iso
 
     now = now or now_kst()
+    has_ad = searchad_credentials() is not None
     out = []
     for p in cfg.products:
         s = seed_settings(store, p.id)
         if not s["seeds"]:
             continue
         last = from_iso(s["generated_at"])
-        if last is None or (now - last).days >= REFRESH_DAYS:
+        if last is None or (now - last).days >= REFRESH_DAYS or (has_ad and not s["searchad_tried"]):
             out.append(p.id)
     return out

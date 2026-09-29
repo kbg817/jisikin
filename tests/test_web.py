@@ -35,7 +35,7 @@ def test_pages_render(client):
 
 def test_meta_and_questions(client):
     meta = client.get("/api/meta").get_json()
-    assert [p["name"] for p in meta["products"]] == ["신의소리", "음파쑥쑥", "닥사렌 모각크림"]
+    assert [p["name"] for p in meta["products"]] == ["신의소리", "명운연구소", "닥사렌 모각크림", "음파쑥쑥"]
     assert meta["counts"]["products"]["sinui"]["total"] == 1
     assert meta["mode"] == "web" and meta["ai"]["enabled"] is False
     items = client.get("/api/questions").get_json()["items"]
@@ -139,3 +139,27 @@ def test_diagnose_endpoint(client, monkeypatch):
     assert client.post("/api/diagnose", json={}).status_code == 403
     r = client.post("/api/diagnose", json={}, headers=H).get_json()
     assert r == {"ok": False, "lines": ["[오류] 검색 실패: 테스트"]}
+
+
+def test_exposure_check_runs_right_after_new_keywords(tmp_path, monkeypatch):
+    import shutil
+    from datetime import timedelta
+
+    from jisikin.config import EXAMPLE_CONFIG_PATH
+    from jisikin.keywords import Candidate, ExpandResult
+    from jisikin.storage import now_kst
+    from jisikin.web import AppState
+
+    path = tmp_path / "config.yaml"
+    shutil.copyfile(EXAMPLE_CONFIG_PATH, path)
+    state = AppState(path, tmp_path / "db.sqlite", data_dir=tmp_path)
+    ran = []
+    monkeypatch.setattr(state, "run_collection", lambda: ran.append("collect"))
+    monkeypatch.setattr(state, "run_exposure", lambda: ran.append("exposure"))
+    monkeypatch.setattr(
+        state, "run_keywords",
+        lambda pid: ran.append(f"keywords:{pid}") or ExpandResult(product=pid, candidates=[Candidate("건선", "건선", ["seed"], 1)]),
+    )
+    state.next_exposure_at = now_kst() + timedelta(hours=5)  # 원래라면 5시간 뒤
+    state._tick()
+    assert ran == ["collect", "keywords:sinui", "keywords:myeongun", "keywords:daksaren", "keywords:eumpa", "exposure"]

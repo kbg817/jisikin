@@ -46,8 +46,12 @@ class Category:
 
 @dataclass
 class Exposure:
-    """상위노출 글을 확인할 검색어. keywords + (regions × region_terms 조합)."""
+    """상위노출 글을 확인할 검색어. keywords + (regions × region_terms 조합).
 
+    seeds 는 [검색어 관리]의 메인 키워드 기본값 (세부 검색어 자동 생성용, 여기서 바로 검색하지는 않음).
+    """
+
+    seeds: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     regions: list[str] = field(default_factory=list)
     region_terms: list[str] = field(default_factory=list)
@@ -261,8 +265,9 @@ def parse_config(text: str) -> AppConfig:
             raise ConfigError(f"{where}.min_score 는 숫자여야 합니다.") from e
         rx = rp.get("exposure") or {}
         if not isinstance(rx, dict):
-            raise ConfigError(f"{where}.exposure 는 keywords / regions / region_terms 항목을 가져야 합니다.")
+            raise ConfigError(f"{where}.exposure 는 seeds / keywords / regions / region_terms 항목을 가져야 합니다.")
         exposure = Exposure(
+            seeds=_str_list(rx.get("seeds"), f"{where}.exposure.seeds"),
             keywords=_str_list(rx.get("keywords"), f"{where}.exposure.keywords"),
             regions=_str_list(rx.get("regions"), f"{where}.exposure.regions"),
             region_terms=_str_list(rx.get("region_terms"), f"{where}.exposure.region_terms"),

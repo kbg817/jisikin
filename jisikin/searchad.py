@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import re
 import time
 
 import requests
@@ -36,6 +37,23 @@ def compact(keyword: str) -> str:
     return "".join(keyword.split()).lower()
 
 
+def hint_key(keyword: str) -> str:
+    """검색광고 API 에 보낼 수 있는 형태: 띄어쓰기·기호를 뺀 한글/영문/숫자만. (기호가 있으면 요청 전체가 거절됨)"""
+    return re.sub(r"[^0-9a-z가-힣]", "", keyword.lower())
+
+
+def _error_detail(r) -> str:
+    try:
+        data = r.json()
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    msg = str(data.get("title") or data.get("message") or data.get("detail") or "").strip()
+    code = data.get("code")
+    return f" ({msg[:80]}{f', 코드 {code}' if code else ''})" if msg or code else ""
+
+
 class SearchAdClient:
     def __init__(self, customer_id: str, access_license: str, secret_key: str,
                  session: requests.Session | None = None, timeout: float = 15.0, delay_seconds: float = 0.3):
@@ -58,7 +76,7 @@ class SearchAdClient:
 
         반환: [{keyword, pc, mobile}] — keyword 는 띄어쓰기 없는 형태로 돌아온다.
         """
-        hints = [compact(h) for h in hints if compact(h)][:5]
+        hints = list(dict.fromkeys(h for h in map(hint_key, hints) if h))[:5]
         if not hints:
             return []
         wait = self._last + self.delay_seconds - time.monotonic()
@@ -77,11 +95,13 @@ class SearchAdClient:
         finally:
             self._last = time.monotonic()
         if r.status_code in (401, 403):
-            raise NaverError("검색광고 API 인증 실패 — CUSTOMER_ID / 액세스라이선스 / 비밀키를 확인하세요.", fatal=True)
+            raise NaverError(
+                "검색광고 API 인증 실패 — CUSTOMER_ID / 액세스라이선스 / 비밀키를 확인하세요." + _error_detail(r), fatal=True, auth=True
+            )
         if r.status_code == 429:
             raise NaverError("검색광고 API 호출이 너무 많습니다. 잠시 후 다시 시도하세요.", fatal=True)
         if r.status_code != 200:
-            raise NaverError(f"검색광고 API 오류 {r.status_code}")
+            raise NaverError(f"검색광고 API 오류 {r.status_code}{_error_detail(r)}")
         try:
             data = r.json()
         except ValueError as e:

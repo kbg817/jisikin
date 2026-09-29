@@ -56,7 +56,7 @@ def test_interval_stretches_when_too_many_keywords(monkeypatch, example_cfg):
     monkeypatch.setenv("NAVER_CLIENT_ID", "id")
     monkeypatch.setenv("NAVER_CLIENT_SECRET", "s")
     cfg = example_cfg
-    assert effective_interval(cfg) == 10  # 기본 검색어 58개는 10분이면 충분
+    assert effective_interval(cfg) == 10  # 기본 검색어 72개는 10분이면 충분
     extra = [f"추가 검색어 {i}" for i in range(250)]
     cfg.products[0].keywords.extend(extra)
     n = len(cfg.all_search_queries())

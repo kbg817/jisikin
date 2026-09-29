@@ -263,7 +263,8 @@ def test_keywords_api(web, monkeypatch):
     assert client.get("/keywords").status_code == 200
     data = client.get("/api/keywords").get_json()
     dak = next(p for p in data["products"] if p["id"] == "daksaren")
-    assert dak["seeds"] == [] and dak["max"] == 20
+    assert dak["seeds"] == ["건선", "모공각화증"] and dak["max"] == 20  # 설정의 exposure.seeds 가 기본값
+    assert dak["used"] == [] and dak["generated_at"] is None
     assert any(k["keyword"] == "인천 건선" for k in dak["config_keywords"])
     assert data["sources"] == {"autocomplete": True, "searchad": False, "ai": False}
 
@@ -282,10 +283,19 @@ def test_keywords_api(web, monkeypatch):
     assert client.post("/api/keywords/add", json={"product": "daksaren", "keyword": "x" * 50}, headers=H).status_code == 400
 
 
-def test_generate_requires_seeds(web):
-    _, client = web
-    r = client.post("/api/keywords/generate", json={"product": "daksaren"}, headers={"X-Jisikin": "1"})
+def test_generate_requires_seeds(web, monkeypatch):
+    state, client = web
+    monkeypatch.setattr(state, "trigger", lambda *a, **k: True)
+    H = {"X-Jisikin": "1"}
+    r = client.post("/api/keywords/seeds", json={"product": "daksaren", "seeds": "", "max": 20}, headers=H).get_json()
+    assert r["seeds"] == [] and r["started"] is False
+    r = client.post("/api/keywords/generate", json={"product": "daksaren"}, headers=H)
     assert r.status_code == 400
+    # 화면에서 비운 메인 키워드는 다시 시작해도 기본값으로 되살리지 않음
+    from jisikin.web import AppState
+
+    again = AppState(state.config_path, state.store.path, data_dir=state.data_dir)
+    assert seed_settings(again.store, "daksaren")["seeds"] == []
 
 
 # ------------------------------------------------------------------ 서버용 데이터 폴더
@@ -298,3 +308,98 @@ def test_server_data_dir(tmp_path):
         env={"JISIKIN_DATA_DIR": str(tmp_path), "PATH": ""},
     ).stdout.split()
     assert out == [str(tmp_path / "config.yaml"), str(tmp_path / ".env"), str(tmp_path / "jisikin.db")]
+
+
+def test_due_again_when_searchad_keys_arrive_after_generation(monkeypatch):
+    """검색광고 키를 넣기 전에 만든 목록은 키가 생기면 한 번 다시 만든다 (실패해도 반복하지 않음)."""
+    cfg = parse_config(CFG)
+    store = Store(":memory:")
+    save_seed_settings(store, "dak", ["건선"], 10)
+    generate_for_product(cfg, store, "dak", client=FakeNaver(TREE), log=lambda m: None)
+    assert seed_settings(store, "dak")["used"] == ["autocomplete", "combo"]
+    assert due_products(cfg, store) == []
+
+    for k, v in {"NAVER_AD_CUSTOMER_ID": "1", "NAVER_AD_ACCESS_LICENSE": "L", "NAVER_AD_SECRET_KEY": "S"}.items():
+        monkeypatch.setenv(k, v)
+    assert due_products(cfg, store) == ["dak"]
+
+    class BadAd:
+        def keyword_stats(self, hints):
+            raise NaverError("검색광고 API 인증 실패", fatal=True, auth=True)
+
+    generate_for_product(cfg, store, "dak", client=FakeNaver(TREE), ad_client=BadAd(), log=lambda m: None)
+    s = seed_settings(store, "dak")
+    assert s["searchad_tried"] and "검색광고 API 인증 실패" in s["last_error"]
+    assert due_products(cfg, store) == []  # 키가 틀려도 계속 다시 만들지는 않음 (키를 다시 저장하면 새로 만듦)
+
+
+def test_searchad_batch_failure_does_not_stop_the_rest():
+    cfg = parse_config(CFG)
+
+    class FlakyAd:
+        def __init__(self):
+            self.calls = 0
+
+        def keyword_stats(self, hints):
+            self.calls += 1
+            if self.calls == 2:
+                raise NaverError("검색광고 API 오류 400 (잘못된 키워드, 코드 11001)")
+            return [{"keyword": h.replace(" ", ""), "pc": 100, "mobile": 900} for h in hints]
+
+    ad = FlakyAd()
+    res = expand(cfg, cfg.product("dak"), ["건선"], FakeNaver(TREE), ad_client=ad, use_ai=False)
+    assert ad.calls > 3  # 두 번째 묶음이 실패해도 나머지 묶음은 계속 조회
+    assert res.errors == ["검색광고 API: 검색광고 API 오류 400 (잘못된 키워드, 코드 11001)"]
+    assert "searchad" in res.used
+    assert sum(c.volume is None for c in res.candidates) >= 1  # 실패한 묶음만 검색수 모름
+
+    class DeadAd:
+        def __init__(self):
+            self.calls = 0
+
+        def keyword_stats(self, hints):
+            self.calls += 1
+            raise NaverError("검색광고 API 인증 실패", fatal=True)
+
+    dead = DeadAd()
+    res = expand(cfg, cfg.product("dak"), ["건선"], FakeNaver(TREE), ad_client=dead, use_ai=False)
+    assert dead.calls == 1 and "searchad" not in res.used and len(res.errors) == 1
+
+
+def test_searchad_hints_are_cleaned_and_errors_explained():
+    s = AdSession({"keywordList": []})
+    client = SearchAdClient("1", "L", "S", session=s, delay_seconds=0)
+    client.keyword_stats(["건선 좋은 음식?", "건선", " 건선 ", "“두피 건선”", "!!"])
+    assert s.calls[0][1]["hintKeywords"] == "건선좋은음식,건선,두피건선"  # 기호가 있으면 요청 전체가 거절되므로 제거
+
+    bad = AdSession({"title": "Invalid parameter", "code": 11001}, status=400)
+    with pytest.raises(NaverError) as e:
+        SearchAdClient("1", "L", "S", session=bad, delay_seconds=0).keyword_stats(["건선"])
+    assert "400" in str(e.value) and "Invalid parameter" in str(e.value) and "11001" in str(e.value) and not e.value.fatal
+
+
+def test_default_seeds_come_from_example_for_old_configs():
+    from jisikin.keywords import default_seeds, ensure_default_seeds
+
+    old = parse_config("""
+products:
+  - id: daksaren
+    name: 닥사렌 모각크림
+    keywords: [건선]
+  - id: eumpa
+    name: 다른 제품
+    keywords: [키 성장]
+  - id: mine
+    name: 새 제품
+    keywords: [작명]
+    exposure:
+      seeds: [작명]
+""")
+    assert default_seeds(old.product("daksaren")) == ["건선", "모공각화증"]  # 예전 config.yaml 에는 seeds 가 없음
+    assert default_seeds(old.product("eumpa")) == []  # 같은 id 라도 다른 제품이면 쓰지 않음
+    assert default_seeds(old.product("mine")) == ["작명"]
+    store = Store(":memory:")
+    save_seed_settings(store, "mine", ["직접 넣은 것"], 5)
+    assert ensure_default_seeds(old, store) == ["닥사렌 모각크림"]
+    assert seed_settings(store, "mine")["seeds"] == ["직접 넣은 것"]  # 화면에서 넣은 값이 우선
+    assert ensure_default_seeds(old, store) == []
