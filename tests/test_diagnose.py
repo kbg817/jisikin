@@ -85,7 +85,7 @@ def test_debug_lines_when_nothing_found(example_cfg):
     d = QuestionDetail(title="t", body="b", answer_count=1)  # 작성일 모름
     client = Client(detail=d, integrated=[])
     client.last_status = 200
-    client.last_html = '<html><title>인천 건선 : 네이버 검색</title><body>지식iN 결과 <a href="https://kin.naver.com/x">x</a> 2026.09.01.</body></html>'
+    client.last_html = '<html><title>인천 건선 : 네이버 검색</title><script>captcha</script><body>지식iN 결과 <a href="https://kin.naver.com/x">x</a> 2026.09.01.</body></html>'
     ok, lines = run_diagnostics(example_cfg, client)
     text = "\n".join(lines)
     assert not ok

@@ -308,3 +308,46 @@ def test_search_integrated_falls_back_to_raw_links():
     items = client.search_integrated("인천 건선", "pc")
     assert [q.doc_id for q in items] == ["777"]
     assert client.last_status == 200 and "__STATE__" in client.last_html
+
+
+# 실제 네이버 통합검색(PC)에서 나온 모양: 출처 표시("네이버 지식iN 새 창 열림") 링크가 제목보다 먼저 나온다
+NAVER_KIN_BLOCK = """
+<section class="sc_new">
+ <ul class="lst">
+  <li class="bx">
+   <div class="user_box"><a href="https://kin.naver.com/qna/detail.naver?dirId=70304&amp;docId=494908043" class="name">네이버 지식iN<span class="blind">새 창 열림</span></a></div>
+   <div class="question_area"><a href="https://kin.naver.com/qna/detail.naver?dirId=70304&amp;docId=494908043" class="api_txt_lines question_text">키 크는 방법 알려주세요 중3입니다</a></div>
+   <div class="answer_area"><a href="https://kin.naver.com/qna/detail.naver?dirId=70304&amp;docId=494908043#answer1" class="api_txt_lines answer_text">잠을 충분히 자는 게 제일 중요합니다. 성장판이 열려 있다면…</a></div>
+  </li>
+  <li class="bx">
+   <div class="user_box"><a href="https://kin.naver.com/qna/detail.naver?dirId=130506&amp;docId=495257811" class="name">네이버 지식iN<span class="blind">새 창 열림</span></a></div>
+   <div><a href="https://kin.naver.com/qna/detail.naver?dirId=130506&amp;docId=495257811#answer1">답변 미리보기가 제목보다 먼저 나오는 경우라도 #answer 링크는 제목으로 쓰지 않습니다</a></div>
+   <div><a href="https://kin.naver.com/qna/detail.naver?dirId=130506&amp;docId=495257811">초등학생 키 성장 영양제 추천</a></div>
+  </li>
+  <li class="bx">
+   <div class="user_box"><a href="https://kin.naver.com/qna/detail.naver?dirId=70115&amp;docId=495071509">네이버 지식iN 새 창 열림</a></div>
+  </li>
+ </ul>
+</section>
+"""
+
+
+def test_integrated_block_picks_real_titles():
+    items = extract_questions(NAVER_KIN_BLOCK, "https://search.naver.com/search.naver")
+    assert [q.doc_id for q in items] == ["494908043", "495257811", "495071509"]
+    assert items[0].title == "키 크는 방법 알려주세요 중3입니다"
+    assert items[1].title == "초등학생 키 성장 영양제 추천"
+    assert items[2].title == "(제목 확인 중)"  # 출처 표시만 있으면 순위는 남기고 제목은 나중에
+    assert "지식iN" not in items[0].snippet and "새 창" not in items[0].snippet
+
+
+def test_unknown_title_is_replaced_when_real_title_arrives():
+    from jisikin.naver import RawQuestion
+    from jisikin.storage import Store
+
+    store = Store(":memory:")
+    url = "https://kin.naver.com/qna/detail.naver?docId=1"
+    store.upsert_raw(RawQuestion(doc_id="1", url=url, title="(제목 확인 중)"), "노출:x", feed=False)
+    store.upsert_raw(RawQuestion(doc_id="1", url=url, title="진짜 제목"), "노출:y", feed=False)
+    store.upsert_raw(RawQuestion(doc_id="1", url=url, title="(제목 확인 중)"), "노출:z", feed=False)
+    assert store.get("1")["title"] == "진짜 제목"

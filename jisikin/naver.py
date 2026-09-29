@@ -199,27 +199,45 @@ _ANSWER_COUNT_IN_TEXT = re.compile(r"답변\s*수?\s*[:：]?\s*(\d+)")
 # ---------------------------------------------------------------- HTML 파싱
 
 
+_BLIND_TEXT_RE = re.compile(r"\s*새\s*창\s*(?:으로\s*)?(?:열림|열기)\s*")
+_SOURCE_LABEL_RE = re.compile(r"^(?:네이버\s*)?지식\s*iN(?:\s*(?:질문|답변|Q&A))?$", re.I)
+UNKNOWN_TITLE = "(제목 확인 중)"
+
+
 def extract_questions(html: str, base_url: str = "https://kin.naver.com/") -> list[RawQuestion]:
-    """질문 링크가 들어있는 아무 지식iN 페이지(검색 결과, 분야 목록)에서 질문 목록을 뽑는다."""
+    """질문 링크가 들어있는 아무 지식iN 페이지(검색 결과, 분야 목록)에서 질문 목록을 뽑는다.
+
+    같은 질문으로 가는 링크가 여러 개면(출처 표시·제목·답변 미리보기 등) 제목다운 링크를 고른다.
+    순서는 그 질문 링크가 페이지에 처음 나온 순서 (= 노출 순위).
+    """
     soup = _soup(html)
-    found: dict[str, RawQuestion] = {}
     order: list[str] = []
-    for a in soup.find_all("a", href=True):
+    urls: dict[str, str] = {}
+    cands: dict[str, list[tuple[float, int, Tag, str]]] = {}
+    for idx, a in enumerate(soup.find_all("a", href=True)):
         parsed = parse_kin_url(urljoin(base_url, a["href"]))
         if not parsed:
             continue
         doc_id, url = parsed
-        title = _text(a)
-        if len(title) < 2 or title in _GENERIC_LINK_TEXT:
+        if doc_id not in urls:
+            order.append(doc_id)
+            urls[doc_id] = url
+        text = re.sub(r"\s+", " ", _BLIND_TEXT_RE.sub(" ", _text(a))).strip()
+        if len(text) < 2 or text in _GENERIC_LINK_TEXT or _SOURCE_LABEL_RE.match(text):
+            continue  # '답변하기', '네이버 지식iN' 같은 버튼·출처 표시
+        cands.setdefault(doc_id, []).append((_title_score(a), idx, a, text))
+
+    out: list[RawQuestion] = []
+    for doc_id in order:
+        options = cands.get(doc_id)
+        if not options:  # 제목 링크는 없지만 순위 계산을 위해 남긴다 (제목은 상세 페이지에서 채움)
+            out.append(RawQuestion(doc_id=doc_id, url=urls[doc_id], title=UNKNOWN_TITLE))
             continue
-        prev = found.get(doc_id)
-        if prev and not _looks_like_title_anchor(a):
-            continue  # 이미 제목 링크를 찾았음
-        row = _row_container(a)
-        ctx = _text(row)
-        rq = RawQuestion(doc_id=doc_id, url=url, title=title)
+        _, _, a, title = max(options, key=lambda o: (o[0], -o[1]))
+        rq = RawQuestion(doc_id=doc_id, url=urls[doc_id], title=title)
+        ctx = _text(_row_container(a))
         if ctx:
-            rest = ctx.replace(title, " ", 1)
+            rest = _BLIND_TEXT_RE.sub(" ", ctx).replace(title, " ", 1)
             m = _ANSWER_COUNT_IN_TEXT.search(rest)
             if m:
                 rq.answer_count = int(m.group(1))
@@ -228,24 +246,26 @@ def extract_questions(html: str, base_url: str = "https://kin.naver.com/") -> li
                 rq.asked_at = parse_korean_datetime(md.group(0))
             rest = _ANSWER_COUNT_IN_TEXT.sub(" ", rest)
             rest = _DATE_IN_TEXT.sub(" ", rest)
-            rest = re.sub(r"조회\s*수?\s*\d+|추천\s*수?\s*\d+|내공\s*\d+", " ", rest)
+            rest = re.sub(r"조회\s*수?\s*\d+|추천\s*수?\s*\d+|내공\s*\d+|(?:네이버\s*)?지식\s*iN", " ", rest)
             rq.snippet = re.sub(r"\s+", " ", rest).strip()[:300]
-        if doc_id not in found:
-            order.append(doc_id)
-        found[doc_id] = rq
-    return [found[d] for d in order]
+        out.append(rq)
+    return out
 
 
-def _looks_like_title_anchor(a: Tag) -> bool:
-    for node in [a, *list(a.parents)[:3]]:
-        if not isinstance(node, Tag):
-            continue
-        if node.name in ("dt", "h2", "h3", "h4", "strong"):
-            return True
-        classes = " ".join(node.get("class") or [])
-        if "title" in classes or "tit" in classes.split():
-            return True
-    return False
+def _title_score(a: Tag) -> float:
+    """제목 링크일수록 높은 점수. (제목 class·제목 태그 +, 답변 미리보기·#answer 링크 -)"""
+    score = 0.0
+    if "#" in a.get("href", ""):
+        score -= 3
+    nodes = [a, *[p for p in list(a.parents)[:3] if isinstance(p, Tag)]]
+    if any(n.name in ("dt", "h2", "h3", "h4", "strong") for n in nodes):
+        score += 2
+    classes = " ".join(" ".join(n.get("class") or []) for n in nodes).lower()
+    if re.search(r"(^|[\s_-])(tit|title|headline|subject|question)", classes):
+        score += 3
+    if re.search(r"answer|desc|dsc|snippet|preview", classes):
+        score -= 2
+    return score
 
 
 def _row_container(a: Tag) -> Tag | None:
@@ -416,7 +436,7 @@ def extract_kin_links_raw(html: str) -> list[RawQuestion]:
         parsed = parse_kin_url(url)
         if parsed and parsed[0] not in seen:
             seen.add(parsed[0])
-            out.append(RawQuestion(doc_id=parsed[0], url=parsed[1], title="(제목 확인 중)"))
+            out.append(RawQuestion(doc_id=parsed[0], url=parsed[1], title=UNKNOWN_TITLE))
     return out
 
 

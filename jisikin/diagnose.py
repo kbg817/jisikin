@@ -140,7 +140,8 @@ def run_diagnostics(
     return ok, lines
 
 
-_BLOCK_WORDS = ("captcha", "자동입력 방지", "비정상적인", "보안 절차", "접근이 제한", "robot")
+# 'captcha' 같은 영어 단어는 정상 검색 화면의 스크립트에도 들어 있어서, 차단 화면에만 나오는 문구로 판단한다
+_BLOCK_WORDS = ("자동입력 방지", "비정상적인 접근", "보안 절차", "접근이 제한", "일시적으로 제한")
 
 
 def _page_debug(client, label: str, patterns: dict[str, str]) -> list[str]:

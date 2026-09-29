@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .matcher import Matcher
-from .naver import KST, QuestionDetail, RawQuestion
+from .naver import KST, UNKNOWN_TITLE, QuestionDetail, RawQuestion
 
 STATUSES = ("new", "opened", "answered", "skipped")
 TODO_STATUSES = ("new", "opened")
@@ -199,13 +199,16 @@ class Store:
                 sources.append(source)
             c.execute(
                 """UPDATE questions SET last_seen=?, sources=?,
+                          title=CASE WHEN title=? AND ?<>? THEN ? ELSE title END,
                           snippet=CASE WHEN length(?) > length(snippet) THEN ? ELSE snippet END,
                           answer_count=COALESCE(?, answer_count),
                           asked_at=COALESCE(asked_at, ?),
                           in_feed=MAX(in_feed, ?)
                    WHERE doc_id=?""",
                 (
-                    now_s, json.dumps(sources[-20:], ensure_ascii=False), rq.snippet, rq.snippet,
+                    now_s, json.dumps(sources[-20:], ensure_ascii=False),
+                    UNKNOWN_TITLE, rq.title, UNKNOWN_TITLE, rq.title,  # 제목 모름 → 제목을 알게 되면 채움
+                    rq.snippet, rq.snippet,
                     rq.answer_count, iso(rq.asked_at), int(feed), rq.doc_id,
                 ),
             )
