@@ -241,6 +241,18 @@ details.panel summary { cursor: pointer; font-size: 14px; }
   .kw-sources .src.on { background: #14532d; color: #bbf7d0; }
 }
 
+/* 답변 예시 */
+.ex-card { box-shadow: none; }
+.ex-card.starred { border-left-color: #f59e0b; }
+.ex-title { font-weight: 600; font-size: 15px; word-break: keep-all; overflow-wrap: anywhere; }
+.ex-title a { text-decoration: none; }
+.ex-title a:hover { text-decoration: underline; }
+.ex-answer, .ex-form textarea, .ex-form input {
+  width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); resize: vertical;
+}
+.ex-answer { min-height: 150px; margin: 4px 0 6px; }
+.ex-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+
 /* 좁은 화면 (휴대폰) */
 @media (max-width: 640px) {
   header.top { padding: 10px 16px; gap: 8px; }

@@ -154,6 +154,7 @@ def expand(
     ad_client: SearchAdClient | None = None,
     use_ai: bool = True,
     log: Callable[[str], None] = print,
+    store: Store | None = None,
 ) -> ExpandResult:
     started = time.monotonic()
     res = ExpandResult(product=product.id)
@@ -205,6 +206,8 @@ def expand(
                     AI_SYSTEM,
                     AI_USER.format(name=product.name, guide=product.answer_guide or product.name, seed=seed),
                     effort="low",
+                    store=store,
+                    kind="keywords",
                 )
                 used.add("ai")
                 for i, s in enumerate(parse_ai_lines(text)[:40]):
@@ -290,7 +293,7 @@ def generate_for_product(
         client = NaverClient(credentials=naver_credentials(), delay_seconds=cfg.settings.request_delay_seconds)
     if ad_client is None and searchad_credentials():
         ad_client = SearchAdClient(*searchad_credentials())
-    res = expand(cfg, product, settings["seeds"], client, ad_client, log=log)
+    res = expand(cfg, product, settings["seeds"], client, ad_client, log=log, store=store)
     if res.candidates:
         store.replace_auto_keywords(
             product_id,

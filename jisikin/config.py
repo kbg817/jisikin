@@ -30,7 +30,7 @@ ENV_KEYS = (
     "NAVER_AD_SECRET_KEY",
 )
 
-DEFAULT_AI_MODEL = "claude-opus-5-5"
+DEFAULT_AI_MODEL = "claude-sonnet-5-5"
 
 
 class ConfigError(ValueError):
@@ -105,7 +105,7 @@ class Settings:
 @dataclass
 class AISettings:
     model: str = DEFAULT_AI_MODEL
-    effort: str = "medium"
+    effort: str = "low"
     common_guide: str = ""
 
 

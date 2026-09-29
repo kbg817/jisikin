@@ -124,3 +124,19 @@ def test_myeongun_matching():
     assert best("작명소 추천해주세요 인천")[0] == "myeongun"
     for title in ["강아지 이름 추천해주세요", "게임 닉네임 추천", "영어 이름 추천", "유튜브 채널명 추천", "파일 이름 바꾸는 법", "상호명 변경 방법"]:
         assert best(title) is None, title
+
+
+def test_ai_defaults_move_to_sonnet_only_when_unchanged(tmp_path):
+    old = "ai:\n  model: claude-opus-5-5\n  effort: medium              # low | medium | high\n\n" + HEAD + SINUI
+    path = tmp_path / "config.yaml"
+    path.write_text(old, encoding="utf-8")
+    migrate_config(path, Store(":memory:"))
+    cfg = load_config(path)
+    assert (cfg.ai.model, cfg.ai.effort) == ("claude-sonnet-5-5", "low")
+    assert "effort: low              # low | medium | high" in path.read_text(encoding="utf-8")
+
+    custom = old.replace("claude-opus-5-5", "claude-opus-5").replace("effort: medium", "effort: high")
+    path.write_text(custom, encoding="utf-8")
+    migrate_config(path, Store(":memory:"))
+    cfg = load_config(path)
+    assert (cfg.ai.model, cfg.ai.effort) == ("claude-opus-5", "high")  # 직접 바꾼 값은 그대로

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS questions (
     detail_error      TEXT,
     draft             TEXT,
     draft_at          TEXT,
+    draft_edited      INTEGER NOT NULL DEFAULT 0,  -- 1: 직원이 AI 초안을 고쳐서 저장함
     views             INTEGER,
     in_feed           INTEGER NOT NULL DEFAULT 1,  -- 1: 새 질문 수집으로 찾음, 0: 상위노출 확인으로만 찾음
     status_by         TEXT                         -- 상태를 마지막으로 바꾼 직원 아이디
@@ -122,6 +123,24 @@ CREATE TABLE IF NOT EXISTS auto_keywords (
     updated_at  TEXT NOT NULL,
     PRIMARY KEY (product, keyword)
 );
+
+-- AI 초안이 참고할 모범 답변 (관리자가 ⭐ 로 지정한 것만 사용)
+CREATE TABLE IF NOT EXISTS answer_examples (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    product     TEXT NOT NULL,
+    doc_id      TEXT,                            -- 직원이 답변완료한 질문에서 온 경우
+    title       TEXT NOT NULL DEFAULT '',
+    question    TEXT NOT NULL DEFAULT '',
+    answer      TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'manual',  -- manual: 직접 넣음, final: 직원이 올린 답변
+    edited      INTEGER NOT NULL DEFAULT 0,      -- 1: 직원이 AI 초안을 고쳐서 올림
+    starred     INTEGER NOT NULL DEFAULT 0,      -- 1: AI 초안의 예시로 사용
+    created_by  TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    starred_at  TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ex_doc ON answer_examples(doc_id) WHERE doc_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ex_product ON answer_examples(product, starred);
 """
 
 
@@ -391,6 +410,13 @@ class Store:
                 (key, json.dumps(value, ensure_ascii=False)),
             )
 
+    def kv_update(self, key: str, fn, default=None):
+        """읽고-고치고-쓰기를 한 번에 (여러 직원이 동시에 눌러도 값이 빠지지 않게)."""
+        with self._lock:
+            value = fn(self.kv_get(key, default))
+            self.kv_set(key, value)
+            return value
+
     def kv_incr(self, key: str, n: int = 1) -> None:
         with self._conn() as c:
             c.execute(
@@ -471,9 +497,115 @@ class Store:
                 out[(g["product"], g["keyword"])] = len(g["posts"])
         return out
 
-    def set_draft(self, doc_id: str, draft: str) -> None:
+    def set_draft(self, doc_id: str, draft: str, edited: bool = False) -> None:
+        """AI 가 새로 쓴 초안(edited=False) 또는 직원이 고친 초안(edited=True) 저장."""
         with self._conn() as c:
-            c.execute("UPDATE questions SET draft=?, draft_at=? WHERE doc_id=?", (draft, iso(now_kst()), doc_id))
+            c.execute(
+                "UPDATE questions SET draft=?, draft_at=?, draft_edited=? WHERE doc_id=?",
+                (draft, iso(now_kst()), int(edited), doc_id),
+            )
+
+    def save_draft_edit(self, doc_id: str, text: str) -> bool:
+        """직원이 초안 칸에서 고친 내용. 내용이 바뀐 경우에만 '고침'으로 표시한다."""
+        text = (text or "").strip()
+        with self._conn() as c:
+            row = c.execute("SELECT draft, draft_edited FROM questions WHERE doc_id=?", (doc_id,)).fetchone()
+            if row is None:
+                return False
+            if text and text != (row["draft"] or "").strip():
+                c.execute(
+                    "UPDATE questions SET draft=?, draft_at=?, draft_edited=1 WHERE doc_id=?", (text, iso(now_kst()), doc_id)
+                )
+            return True
+
+    # ------------------------------------------------------------ 모범 답변 예시
+
+    def capture_final_answer(self, doc_id: str, product: str, by: str = "") -> int | None:
+        """답변완료한 질문의 초안(직원이 고친 최종본)을 예시 후보로 남긴다. 이미 있으면 내용만 갱신."""
+        q = self.get(doc_id)
+        answer = ((q or {}).get("draft") or "").strip()
+        if not q or not answer:
+            return None
+        question = (q.get("body") or q.get("snippet") or "")[:1000]
+        now_s = iso(now_kst())
+        with self._conn() as c:
+            row = c.execute("SELECT id FROM answer_examples WHERE doc_id=?", (doc_id,)).fetchone()
+            if row:
+                c.execute(
+                    "UPDATE answer_examples SET answer=?, edited=?, created_by=?, created_at=? WHERE id=?",
+                    (answer, q.get("draft_edited") or 0, by, now_s, row["id"]),
+                )
+                return row["id"]
+            return c.execute(
+                """INSERT INTO answer_examples (product, doc_id, title, question, answer, source, edited, created_by, created_at)
+                   VALUES (?,?,?,?,?,'final',?,?,?)""",
+                (product, doc_id, q.get("title") or "", question, answer, q.get("draft_edited") or 0, by, now_s),
+            ).lastrowid
+
+    def drop_final_answer(self, doc_id: str) -> None:
+        """답변완료를 취소하면 ⭐ 안 한 예시 후보도 지운다."""
+        with self._conn() as c:
+            c.execute("DELETE FROM answer_examples WHERE doc_id=? AND starred=0", (doc_id,))
+
+    def add_example(self, product: str, answer: str, title: str = "", question: str = "", by: str = "", starred: bool = True) -> int:
+        now_s = iso(now_kst())
+        with self._conn() as c:
+            return c.execute(
+                """INSERT INTO answer_examples (product, title, question, answer, source, starred, created_by, created_at, starred_at)
+                   VALUES (?,?,?,?,'manual',?,?,?,?)""",
+                (product, title.strip(), question.strip(), answer.strip(), int(starred), by, now_s, now_s if starred else None),
+            ).lastrowid
+
+    def get_example(self, example_id: int) -> dict | None:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM answer_examples WHERE id=?", (example_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_examples(self, product: str | None = None) -> list[dict]:
+        sql = "SELECT e.*, q.url AS url FROM answer_examples e LEFT JOIN questions q ON q.doc_id = e.doc_id"
+        args: tuple = ()
+        if product:
+            sql += " WHERE e.product=?"
+            args = (product,)
+        sql += " ORDER BY e.starred DESC, COALESCE(e.starred_at, e.created_at) DESC, e.id DESC"
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(sql, args).fetchall()]
+
+    def starred_count(self, product: str) -> int:
+        with self._conn() as c:
+            return c.execute("SELECT COUNT(*) FROM answer_examples WHERE product=? AND starred=1", (product,)).fetchone()[0]
+
+    def starred_examples(self, product: str, limit: int) -> list[dict]:
+        """AI 초안에 넣을 예시. 순서를 고정해(오래된 것부터) 같은 제품이면 프롬프트가 같도록 한다 (캐시 적중)."""
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT * FROM (SELECT * FROM answer_examples WHERE product=? AND starred=1
+                   ORDER BY starred_at DESC, id DESC LIMIT ?) ORDER BY id""",
+                (product, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_example_star(self, example_id: int, starred: bool) -> bool:
+        with self._conn() as c:
+            return c.execute(
+                "UPDATE answer_examples SET starred=?, starred_at=? WHERE id=?",
+                (int(starred), iso(now_kst()) if starred else None, example_id),
+            ).rowcount > 0
+
+    def update_example(self, example_id: int, answer: str, title: str | None = None, question: str | None = None) -> bool:
+        fields, args = ["answer=?"], [answer.strip()]
+        if title is not None:
+            fields.append("title=?")
+            args.append(title.strip())
+        if question is not None:
+            fields.append("question=?")
+            args.append(question.strip())
+        with self._conn() as c:
+            return c.execute(f"UPDATE answer_examples SET {', '.join(fields)} WHERE id=?", (*args, example_id)).rowcount > 0
+
+    def delete_example(self, example_id: int) -> bool:
+        with self._conn() as c:
+            return c.execute("DELETE FROM answer_examples WHERE id=?", (example_id,)).rowcount > 0
 
     def list_questions(
         self,
@@ -780,6 +912,8 @@ def _migrate(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE questions ADD COLUMN in_feed INTEGER NOT NULL DEFAULT 1")
     if "status_by" not in cols:
         c.execute("ALTER TABLE questions ADD COLUMN status_by TEXT")
+    if "draft_edited" not in cols:
+        c.execute("ALTER TABLE questions ADD COLUMN draft_edited INTEGER NOT NULL DEFAULT 0")
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

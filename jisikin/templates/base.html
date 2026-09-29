@@ -14,6 +14,7 @@
   {% block actions %}{% endblock %}
   {% if user.role == "admin" %}
   <a class="btn {% if request.endpoint == 'keywords_page' %}current{% endif %}" href="/keywords">검색어 관리</a>
+  <a class="btn {% if request.endpoint == 'examples_page' %}current{% endif %}" href="/examples">답변 예시</a>
   <a class="btn {% if request.endpoint == 'settings' %}current{% endif %}" href="/settings">설정</a>
   {% endif %}
   {% if auth_on and user.username %}

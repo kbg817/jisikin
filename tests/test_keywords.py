@@ -183,7 +183,7 @@ def test_expand_with_ai(monkeypatch):
     import jisikin.keywords as kwmod
 
     monkeypatch.setattr(kwmod, "ai_status", lambda: (True, "ok"))
-    monkeypatch.setattr(kwmod, "ask_claude", lambda cfg, system, user, effort=None: "건선 초기 증상\n건선에 좋은 음식\n오늘 날씨")
+    monkeypatch.setattr(kwmod, "ask_claude", lambda cfg, system, user, effort=None, **kw: "건선 초기 증상\n건선에 좋은 음식\n오늘 날씨")
     res = expand(cfg, cfg.product("dak"), ["건선"], FakeNaver({}), use_ai=True)
     kws = [c.keyword for c in res.candidates]
     assert "건선 초기 증상" in kws and "건선에 좋은 음식" in kws and "오늘 날씨" not in kws

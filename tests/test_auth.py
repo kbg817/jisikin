@@ -73,10 +73,21 @@ def test_admin_login_and_staff_management(server):
     assert staff.get("/keywords").status_code == 403
     assert staff.get("/api/keywords").status_code == 403
     assert staff.post("/api/diagnose", json={}, headers=H).status_code == 403
+    assert staff.get("/examples").status_code == 403
+    assert staff.get("/api/examples").status_code == 403
+    assert staff.post("/api/examples/add", json={"product": "sinui", "answer": "x" * 30}, headers=H).status_code == 403
+    assert "답변 예시" not in staff.get("/").get_data(as_text=True)
 
-    # 직원이 답변완료 → 누가 했는지 기록 + 실적
+    # 직원이 초안을 고쳐서 답변완료 → 누가 했는지 기록 + 실적 + 답변 예시 후보
+    state.store.set_draft("1", "AI 가 쓴 초안입니다.")
+    final = "직원이 다듬은 최종 답변입니다. 재회운은 서로의 마음이 중요해요."
+    assert staff.post("/api/questions/1/draft/save", json={"draft": final}, headers=H).get_json() == {"ok": True}
     assert staff.post("/api/questions/1/status", json={"status": "answered"}, headers=H).get_json() == {"ok": True}
     assert state.store.get("1")["status_by"] == "kim"
+    ex = state.store.list_examples("sinui")
+    assert [(e["answer"], e["edited"], e["created_by"], e["starred"]) for e in ex] == [(final, 1, "kim", 0)]
+    admin_items = admin.get("/api/examples").get_json()["items"]
+    assert admin_items[0]["created_by_name"] == "김직원" and admin_items[0]["url"].endswith("docId=1")
     meta = staff.get("/api/meta").get_json()
     assert meta["people"]["kim"] == "김직원"
     assert meta["answer_stats"] == [{"username": "kim", "name": "김직원", "today": 1, "week": 1, "total": 1}]

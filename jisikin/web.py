@@ -21,7 +21,7 @@ from . import config as config_mod
 from .collector import collect, effective_interval, estimate_api_calls_per_day, resolve_mode
 from .config import AppConfig, ConfigError
 from .diagnose import run_diagnostics
-from .drafter import DraftError, ai_status, generate_draft
+from .drafter import MAX_EXAMPLES, USAGE_KINDS, DraftError, ai_status, generate_draft, monthly_usage
 from .exposure import all_targets, check_exposure
 from .keywords import SOURCE_LABELS, due_products, ensure_default_seeds, generate_for_product, save_seed_settings, seed_settings
 from .matcher import Matcher
@@ -30,6 +30,7 @@ from .searchad import compact
 from .storage import STATUSES, TODO_STATUSES, ApiBudget, Store, iso, now_kst
 
 API_DAILY_LIMIT = 25000
+KRW_PER_USD = 1400  # 화면에 원화로 대략 보여줄 때만 쓰는 환율
 
 
 class AppState:
@@ -378,14 +379,33 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             items.append(item)
         return jsonify(items=items)
 
+    def question_product(q: dict):
+        cfg = state.cfg
+        product = cfg.product(q.get("product")) or cfg.product(state.store.exposure_product(q["doc_id"]))
+        if product is None and q.get("matches"):
+            product = cfg.product(q["matches"][0].get("product_id"))
+        return product
+
     @app.post("/api/questions/<doc_id>/status")
     def api_set_status(doc_id: str):
         require_api_header()
-        status = (request.get_json(silent=True) or {}).get("status")
+        data = request.get_json(silent=True) or {}
+        status = data.get("status")
         if status not in STATUSES:
             return jsonify(error="잘못된 상태"), 400
-        if not state.store.set_status(doc_id, status, by=g.user["username"]):
+        if isinstance(data.get("draft"), str):
+            state.store.save_draft_edit(doc_id, data["draft"])  # 초안 칸에서 마지막으로 고친 내용
+        by = g.user["username"]
+        if not state.store.set_status(doc_id, status, by=by):
             return jsonify(error="질문을 찾을 수 없습니다"), 404
+        if status == "answered":
+            # 올린 답변(초안을 고친 최종본)을 [답변 예시]의 후보로 남긴다
+            q = state.store.get(doc_id)
+            product = question_product(q) if q else None
+            if product:
+                state.store.capture_final_answer(doc_id, product.id, by=by)
+        else:
+            state.store.drop_final_answer(doc_id)
         return jsonify(ok=True)
 
     @app.post("/api/questions/<doc_id>/draft")
@@ -394,18 +414,25 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         q = state.store.get(doc_id)
         if not q:
             return jsonify(error="질문을 찾을 수 없습니다"), 404
-        cfg = state.cfg
-        product = cfg.product(q.get("product")) or cfg.product(state.store.exposure_product(doc_id))
-        if product is None and q.get("matches"):
-            product = cfg.product(q["matches"][0].get("product_id"))
+        product = question_product(q)
         if product is None:
             return jsonify(error="어느 제품과 관련된 질문인지 알 수 없습니다"), 400
         try:
-            draft = generate_draft(cfg, product, q)
+            draft = generate_draft(state.cfg, product, q, store=state.store)
         except DraftError as e:
             return jsonify(error=str(e)), 400
         state.store.set_draft(doc_id, draft)
         return jsonify(draft=draft)
+
+    @app.post("/api/questions/<doc_id>/draft/save")
+    def api_draft_save(doc_id: str):
+        require_api_header()
+        text = (request.get_json(silent=True) or {}).get("draft")
+        if not isinstance(text, str) or len(text) > 10000:
+            return jsonify(error="잘못된 요청"), 400
+        if not state.store.save_draft_edit(doc_id, text):
+            return jsonify(error="질문을 찾을 수 없습니다"), 404
+        return jsonify(ok=True)
 
     @app.post("/api/collect")
     def api_collect():
@@ -556,6 +583,88 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         state.store.set_auto_keyword(pid, kw, True, sources=["manual"])
         return jsonify(ok=True)
 
+    # ------------------------------------------------------------ 답변 예시 (관리자)
+
+    def example_payload(ex: dict) -> dict:
+        keep = "id product doc_id url title question answer source edited starred created_by created_at starred_at".split()
+        out = {k: ex.get(k) for k in keep}
+        out["starred"], out["edited"] = bool(ex["starred"]), bool(ex["edited"])
+        out["created_by_name"] = people().get(ex.get("created_by") or "", ex.get("created_by") or "")
+        return out
+
+    @app.get("/examples")
+    @admin_required
+    def examples_page():
+        return render_template("examples.html")
+
+    @app.get("/api/examples")
+    @admin_required
+    def api_examples():
+        cfg = state.cfg
+        items = state.store.list_examples()
+        return jsonify(
+            max=MAX_EXAMPLES,
+            ai=ai_status()[0],
+            model=cfg.ai.model,
+            products=[
+                {"id": p.id, "name": p.name, "color": p.color, "starred": state.store.starred_count(p.id)} for p in cfg.products
+            ],
+            items=[example_payload(ex) for ex in items if cfg.product(ex["product"])],
+        )
+
+    def star_room(product_id: str) -> bool:
+        return state.store.starred_count(product_id) < MAX_EXAMPLES
+
+    @app.post("/api/examples/add")
+    @admin_required
+    def api_examples_add():
+        require_api_header()
+        data = request.get_json(silent=True) or {}
+        pid, answer = data.get("product"), (data.get("answer") or "").strip()
+        if not state.cfg.product(pid):
+            return jsonify(error="제품을 찾을 수 없습니다"), 404
+        if len(answer) < 20 or len(answer) > 5000:
+            return jsonify(error="답변을 20~5000자로 넣어주세요"), 400
+        starred = star_room(pid)
+        ex_id = state.store.add_example(
+            pid, answer, title=str(data.get("title") or "")[:200], question=str(data.get("question") or "")[:1000],
+            by=g.user["username"], starred=starred,
+        )
+        return jsonify(ok=True, id=ex_id, starred=starred)
+
+    @app.post("/api/examples/<int:ex_id>/star")
+    @admin_required
+    def api_examples_star(ex_id: int):
+        require_api_header()
+        ex = state.store.get_example(ex_id)
+        if not ex:
+            return jsonify(error="예시를 찾을 수 없습니다"), 404
+        on = bool((request.get_json(silent=True) or {}).get("starred"))
+        if on and not ex["starred"] and not star_room(ex["product"]):
+            return jsonify(error=f"⭐ 예시는 제품당 {MAX_EXAMPLES}개까지입니다. 다른 예시의 ⭐를 먼저 빼 주세요"), 400
+        state.store.set_example_star(ex_id, on)
+        return jsonify(ok=True)
+
+    @app.post("/api/examples/<int:ex_id>/update")
+    @admin_required
+    def api_examples_update(ex_id: int):
+        require_api_header()
+        data = request.get_json(silent=True) or {}
+        answer = (data.get("answer") or "").strip()
+        if len(answer) < 20 or len(answer) > 5000:
+            return jsonify(error="답변을 20~5000자로 넣어주세요"), 400
+        if not state.store.update_example(ex_id, answer):
+            return jsonify(error="예시를 찾을 수 없습니다"), 404
+        return jsonify(ok=True)
+
+    @app.post("/api/examples/<int:ex_id>/delete")
+    @admin_required
+    def api_examples_delete(ex_id: int):
+        require_api_header()
+        if not state.store.delete_example(ex_id):
+            return jsonify(error="예시를 찾을 수 없습니다"), 404
+        return jsonify(ok=True)
+
     # ------------------------------------------------------------ 설정 (관리자)
 
     @app.post("/api/classify-test")
@@ -666,6 +775,9 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         for u in state.store.list_users():
             users.append({**u, **stats.get(u["username"], {"today": 0, "week": 0, "total": 0})})
         admin_stats = stats.get(auth.admin_username() if auth.auth_enabled() else "", {"today": 0, "week": 0, "total": 0})
+        now = now_kst()
+        this_month = monthly_usage(state.store, f"{now:%Y-%m}")
+        last_month = monthly_usage(state.store, f"{(now.replace(day=1) - timedelta(days=1)):%Y-%m}")
         return render_template(
             "settings.html",
             config_text=text,
@@ -686,6 +798,12 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             interval_setting=cfg.settings.interval_minutes,
             ai_ok=ai_ok,
             ai_reason=ai_reason,
+            ai_model=cfg.ai.model,
+            ai_effort=cfg.ai.effort,
+            ai_usage=this_month,
+            ai_usage_last=last_month,
+            usage_kinds=USAGE_KINDS,
+            krw_per_usd=KRW_PER_USD,
             masked=config_mod.masked_env(),
             keys_saved=request.args.get("keys_saved") == "1",
             key_error=request.args.get("key_error"),

@@ -404,7 +404,14 @@ function renderExposure(groups) {
 // ---------------------------------------------------------------- 동작
 async function setStatus(card, status) {
   const id = card.dataset.id;
-  await api(`/api/questions/${id}/status`, { status });
+  const body = { status };
+  const ta = card.querySelector(".draft textarea");
+  if (ta && ta.value.trim()) {
+    // 초안 칸에서 고친 최종본을 함께 보냄 → 관리자 [답변 예시]의 후보로 쌓임
+    clearTimeout(draftSaveTimers[id]);
+    body.draft = ta.value;
+  }
+  await api(`/api/questions/${id}/status`, body);
   if (state.view === "exposure") {
     // 같은 글이 여러 검색어에 걸쳐 있을 수 있으니 목록을 다시 그림
     toast(status === "answered" ? "답변완료로 표시했습니다" : status === "skipped" ? "제외했습니다" : "할 일로 되돌렸습니다");
@@ -447,6 +454,23 @@ async function draft(card, btn, regen) {
     if (ok && main) main.textContent = "초안 보기";
   }
 }
+
+// 초안 칸에서 고친 내용은 잠시 뒤 서버에 저장 (새로고침해도 남고, 답변 예시의 최종본이 됨)
+const draftSaveTimers = {};
+function saveDraftSoon(card, delay = 1500) {
+  const id = card.dataset.id;
+  const ta = card.querySelector(".draft textarea");
+  clearTimeout(draftSaveTimers[id]);
+  draftSaveTimers[id] = setTimeout(() => {
+    delete draftSaveTimers[id];
+    if (ta.value.trim()) api(`/api/questions/${id}/draft/save`, { draft: ta.value }).catch(() => {});
+  }, delay);
+}
+
+document.addEventListener("input", (ev) => {
+  const ta = ev.target.closest(".draft textarea");
+  if (ta) saveDraftSoon(ta.closest(".card"));
+});
 
 async function copyText(text) {
   try {
@@ -500,6 +524,7 @@ document.addEventListener("click", async (ev) => {
     else if (act === "draft") await draft(card, btn, false);
     else if (act === "regen") await draft(card, btn, true);
     else if (act === "copy" || act === "copy-open") {
+      saveDraftSoon(card, 0);
       await copyText(card.querySelector(".draft textarea").value);
       toast("초안을 복사했습니다");
       if (act === "copy-open") {

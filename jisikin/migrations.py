@@ -74,8 +74,22 @@ def _myeongun(text: str, example_text: str) -> str | None:
     return add_product_in_order(text, "myeongun", ["sinui", "myeongun", "daksaren", "eumpa"], example_text)
 
 
+def _ai_sonnet(text: str, example_text: str) -> str | None:
+    """AI 초안 기본값 변경: Opus 5.5 / medium → Sonnet 5.5 / low. 직접 다른 값으로 바꿔 둔 경우는 그대로 둔다."""
+    m = re.search(r"^ai:[ \t]*(?:#.*)?\n", text, re.M)
+    if not m:
+        return None
+    nxt = _TOP_KEY_RE.search(text, m.end())
+    end = nxt.start() if nxt else len(text)
+    section = text[m.end() : end]
+    new = re.sub(r"^(  model:[ \t]*)(['\"]?)claude-opus-5-5\2(?=[ \t]|$)", r"\1claude-sonnet-5-5", section, count=1, flags=re.M)
+    new = re.sub(r"^(  effort:[ \t]*)(['\"]?)medium\2(?=[ \t]|$)", r"\1low", new, count=1, flags=re.M)
+    return None if new == section else text[: m.end()] + new + text[end:]
+
+
 MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-09-myeongun", "명운연구소 추가, 제품 순서 변경", _myeongun),
+    ("2026-09-ai-sonnet", "AI 초안 모델 Sonnet 5.5 · 생각 깊이 low", _ai_sonnet),
 ]
 
 

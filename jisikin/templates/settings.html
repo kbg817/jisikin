@@ -140,6 +140,27 @@
         <button class="btn small" id="d-copy" type="button" hidden>결과 복사</button>
       </div>
 
+      <div class="panel" id="ai-usage">
+        <h2>AI 사용량 <span class="muted" style="font-weight:normal;font-size:12px">(Claude API · 추정)</span></h2>
+        <dl>
+          <dt>모델</dt>
+          <dd>{{ ai_model }} <span class="muted">· 생각 깊이 {{ ai_effort }}</span></dd>
+          <dt>이번 달</dt>
+          <dd><b>${{ "%.2f"|format(ai_usage.cost) }}</b>
+            <span class="muted">(약 {{ "{:,}".format((ai_usage.cost * krw_per_usd)|round|int) }}원 · {{ ai_usage.calls }}회)</span>
+            {% for kind, label in usage_kinds.items() %}{% if ai_usage.kinds.get(kind) %}
+            <br><span class="muted" style="font-size:12px">{{ label }} {{ ai_usage.kinds[kind].calls }}회 · ${{ "%.2f"|format(ai_usage.kinds[kind].cost) }}</span>
+            {% endif %}{% endfor %}
+          </dd>
+          <dt>지난달</dt>
+          <dd>${{ "%.2f"|format(ai_usage_last.cost) }} <span class="muted">({{ ai_usage_last.calls }}회)</span></dd>
+        </dl>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">
+          Claude 구독(Pro·Max)과는 별개로 Claude Console 의 API 크레딧에서 나갑니다.
+          정확한 청구액과 월 사용 한도는 Console 에서 확인·설정하세요. (원화는 1달러 {{ "{:,}".format(krw_per_usd) }}원으로 계산)
+        </p>
+      </div>
+
       <div class="panel test">
         <h2>분류 테스트</h2>
         <p class="muted" style="font-size:13px;margin-top:0">질문 예시를 넣어 어떤 제품·카테고리로 잡히는지 확인하세요. (저장된 설정 기준)</p>
