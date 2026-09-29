@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .matcher import Matcher
-from .naver import KST, UNKNOWN_TITLE, QuestionDetail, RawQuestion
+from .naver import KST, UNKNOWN_TITLE, NaverError, QuestionDetail, RawQuestion
 
 STATUSES = ("new", "opened", "answered", "skipped")
 TODO_STATUSES = ("new", "opened")
@@ -302,6 +302,7 @@ class Store:
             c.execute("DELETE FROM exposure_checks WHERE checked_at < ?", (old,))
             c.execute("DELETE FROM exposure_ranks WHERE check_id NOT IN (SELECT id FROM exposure_checks)")
             c.execute("DELETE FROM views_history WHERE checked_at < ?", (old,))
+            c.execute("DELETE FROM kv WHERE key LIKE 'api_calls:%' AND key < ?", (f"api_calls:{now - timedelta(days=40):%Y-%m-%d}",))
         return n
 
     # ------------------------------------------------------------ 화면용
@@ -390,6 +391,14 @@ class Store:
                 (key, json.dumps(value, ensure_ascii=False)),
             )
 
+    def kv_incr(self, key: str, n: int = 1) -> None:
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO kv (key, value) VALUES (?, ?)
+                   ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + ? AS TEXT)""",
+                (key, str(n), n),
+            )
+
     def auto_keywords(self, product: str | None = None, enabled_only: bool = False) -> list[dict]:
         sql, args = "SELECT * FROM auto_keywords WHERE 1=1", []
         if product:
@@ -404,10 +413,11 @@ class Store:
             r["sources"] = json.loads(r["sources"] or "[]")
         return rows
 
-    def replace_auto_keywords(self, product: str, candidates: list[dict], max_enabled: int) -> None:
+    def replace_auto_keywords(self, product: str, candidates: list[dict], max_enabled: int, min_volume: int = 0) -> None:
         """새로 만든 후보로 교체. 사람이 직접 켜고/끈 검색어는 그 선택을 유지한다.
 
         candidates: 점수 높은 순 [{keyword, seed, sources, pc, mobile, score}]
+        min_volume: 월간 검색수(PC+모바일)를 알 때, 이보다 적은 검색어는 켜지 않는다.
         """
         now_s = iso(now_kst())
         with self._conn() as c:
@@ -426,7 +436,9 @@ class Store:
                          cand.get("mobile"), cand.get("score", 0), now_s, product, kw),
                     )
                     continue
-                enabled = auto_on < max_enabled
+                known = cand.get("pc") is not None or cand.get("mobile") is not None
+                volume = (cand.get("pc") or 0) + (cand.get("mobile") or 0)
+                enabled = auto_on < max_enabled and not (known and volume < min_volume)
                 auto_on += int(enabled)
                 c.execute(
                     """INSERT INTO auto_keywords (product, keyword, seed, sources, pc, mobile, score, enabled, user_set, updated_at)
@@ -709,6 +721,36 @@ class Store:
             g["posts"] = posts
             out.append(g)
         return out
+
+
+class ApiBudget:
+    """네이버 검색 API 하루 호출 수를 세고, 상한에 닿으면 더 부르지 않게 막는다.
+
+    네이버 무료 한도(하루 25,000회)를 넘으면 호출이 거부되고, 앞으로 초과분이 유료가 될 수 있어
+    그보다 낮은 상한(설정 api_daily_limit)을 둔다. 날짜는 한국 시간 기준, 기록은 DB 에 남아 재시작해도 이어진다.
+    """
+
+    def __init__(self, store: Store, daily_limit: int):
+        self.store = store
+        self.daily_limit = daily_limit
+
+    def _key(self) -> str:
+        return f"api_calls:{now_kst():%Y-%m-%d}"
+
+    def used(self) -> int:
+        return int(self.store.kv_get(self._key(), 0) or 0)
+
+    def check(self) -> None:
+        if self.daily_limit > 0 and self.used() >= self.daily_limit:
+            raise NaverError(
+                f"오늘 네이버 API 호출 상한({self.daily_limit:,}회)에 도달해 API 검색을 멈췄습니다. "
+                "밤 12시(한국 시간)에 다시 시작합니다.",
+                fatal=True,
+                budget=True,
+            )
+
+    def record(self, n: int = 1) -> None:
+        self.store.kv_incr(self._key(), n)
 
 
 def views_per_day(q: dict, history: list[tuple[str, int]], now: datetime) -> tuple[float | None, str]:

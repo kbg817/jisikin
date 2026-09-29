@@ -26,7 +26,7 @@ from .exposure import all_targets, check_exposure
 from .keywords import SOURCE_LABELS, due_products, generate_for_product, save_seed_settings, seed_settings
 from .matcher import Matcher
 from .searchad import compact
-from .storage import STATUSES, TODO_STATUSES, Store, iso, now_kst
+from .storage import STATUSES, TODO_STATUSES, ApiBudget, Store, iso, now_kst
 
 API_DAILY_LIMIT = 25000
 
@@ -461,6 +461,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                     "color": p.color,
                     "seeds": s["seeds"],
                     "max": s["max"],
+                    "min_volume": s["min_volume"],
                     "generated_at": s["generated_at"],
                     "last_error": s["last_error"],
                     "config_keywords": [
@@ -504,11 +505,12 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             seeds = seeds.replace("\n", ",").split(",")
         try:
             max_n = int(data.get("max") or 20)
+            min_volume = None if data.get("min_volume") in (None, "") else int(data["min_volume"])
         except (TypeError, ValueError):
-            return jsonify(error="개수는 숫자로 넣어주세요"), 400
-        s = save_seed_settings(state.store, pid, [str(x) for x in seeds], max_n)
+            return jsonify(error="개수·검색수는 숫자로 넣어주세요"), 400
+        s = save_seed_settings(state.store, pid, [str(x) for x in seeds], max_n, min_volume)
         started = bool(s["seeds"]) and state.trigger("keywords", pid, then_exposure=True)
-        return jsonify(ok=True, seeds=s["seeds"], max=s["max"], started=started)
+        return jsonify(ok=True, seeds=s["seeds"], max=s["max"], min_volume=s["min_volume"], started=started)
 
     @app.post("/api/keywords/generate")
     @admin_required
@@ -579,6 +581,11 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                 return redirect(url_for("settings", key_error=str(e)))
             state.log("API 키 저장 — 새 설정으로 수집을 시작합니다")
             state.trigger()
+            if any(k.startswith("NAVER_AD_") and v for k, v in values.items()):
+                # 검색광고 키가 생기면 월간 검색수로 검색어를 다시 골라야 하므로 바로 다시 생성
+                for p in state.cfg.products:
+                    if seed_settings(state.store, p.id)["seeds"]:
+                        state.trigger("keywords", p.id, then_exposure=True)
         return redirect(url_for("settings", keys_saved="1"))
 
     @app.post("/settings/users")
@@ -662,6 +669,9 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             exposure_hours=state.exposure_interval_hours(),
             api_calls=estimate_api_calls_per_day(cfg),
             api_limit=API_DAILY_LIMIT,
+            api_cap=cfg.settings.api_daily_limit,
+            api_used=ApiBudget(state.store, cfg.settings.api_daily_limit).used(),
+            interval_setting=cfg.settings.interval_minutes,
             ai_ok=ai_ok,
             ai_reason=ai_reason,
             masked=config_mod.masked_env(),

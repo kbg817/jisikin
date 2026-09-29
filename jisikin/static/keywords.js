@@ -93,6 +93,9 @@ function render() {
       <label>켜 둘 검색어 수
         <input id="kw-max" type="number" min="1" max="60" value="${p.max}">
       </label>
+      <label title="검색광고 API 로 월간 검색수(PC+모바일)를 알 때, 이보다 적은 검색어는 켜지 않습니다">최소 월간 검색수
+        <input id="kw-min" type="number" min="0" step="10" value="${p.min_volume}" ${data.sources.searchad ? "" : "disabled"}>
+      </label>
       <button class="btn primary" id="kw-save" ${busy ? "disabled" : ""}>${busy ? "생성 중…" : "저장하고 자동 생성"}</button>
       <div class="muted kw-meta">
         ${busy ? "<b>검색어를 만드는 중입니다… (1분 정도, 끝나면 상위노출 확인까지 이어서 합니다)</b>" :
@@ -110,7 +113,7 @@ function render() {
         </span>
       </div>
       ${p.auto.length ? `
-      <p class="muted" style="font-size:13px;margin:0 0 8px">${hasVolume ? "월간 검색수가 많은 순입니다." : "월간 검색수 없이 추정 점수 순입니다. (검색광고 API 키를 넣으면 실제 검색수로 정렬)"} 체크를 끄면 확인에서 빠집니다.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 8px">${hasVolume ? `월간 검색수가 많은 순입니다. 월 ${num(p.min_volume)}회 미만은 자동으로 꺼 둡니다.` : "월간 검색수 없이 추정 점수 순입니다. <b>[설정]에 검색광고 API 키를 넣으면 실제 검색수로 정렬하고 검색량 낮은 검색어를 자동으로 뺍니다.</b>"} 체크를 끄면 확인에서 빠집니다.</p>
       <div class="table-wrap"><table class="runs kw-table">
         <tr><th>사용</th><th>검색어</th><th>월간 검색수</th><th>출처</th><th>지식iN 노출</th></tr>
         ${rows}
@@ -135,7 +138,9 @@ document.addEventListener("click", async (ev) => {
   }
   if (ev.target.id === "kw-save") {
     try {
-      const r = await api("/api/keywords/seeds", { product: current, seeds: $("#kw-seeds").value, max: $("#kw-max").value });
+      const r = await api("/api/keywords/seeds", {
+        product: current, seeds: $("#kw-seeds").value, max: $("#kw-max").value, min_volume: $("#kw-min").value,
+      });
       toast(r.seeds.length ? "저장했습니다. 검색어를 만드는 중입니다…" : "메인 키워드를 비웠습니다");
       await load();
     } catch (e) { toast(e.message); }

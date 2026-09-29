@@ -54,10 +54,11 @@ _GENERIC_LINK_TEXT = {"답변하기", "답변", "질문", "더보기", "원문�
 class NaverError(Exception):
     """사용자에게 보여줄 수 있는 네이버 요청 오류."""
 
-    def __init__(self, message: str, fatal: bool = False, auth: bool = False):
+    def __init__(self, message: str, fatal: bool = False, auth: bool = False, budget: bool = False):
         super().__init__(message)
-        self.fatal = fatal  # True 면 같은 방식의 남은 요청도 실패할 것 (예: 인증 오류)
-        self.auth = auth    # 키가 맞지 않아 실패 (다른 발급처 방식으로 다시 시도해 볼 만함)
+        self.fatal = fatal    # True 면 같은 방식의 남은 요청도 실패할 것 (예: 인증 오류)
+        self.auth = auth      # 키가 맞지 않아 실패 (다른 발급처 방식으로 다시 시도해 볼 만함)
+        self.budget = budget  # 오늘 API 호출 상한에 도달 (내일 0시에 풀림)
 
 
 @dataclass
@@ -462,8 +463,10 @@ class NaverClient:
         delay_seconds: float = 1.0,
         timeout: float = 10.0,
         session: requests.Session | None = None,
+        budget=None,
     ):
         self.credentials = credentials
+        self.budget = budget  # ApiBudget: 하루 API 호출 수를 세고 상한을 넘지 않게 막는다 (없으면 제한 없음)
         self.delay_seconds = delay_seconds
         self.timeout = timeout
         self.session = session or requests.Session()
@@ -520,10 +523,15 @@ class NaverClient:
         else:
             url = API_URL
             headers = {"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": secret}
+        if self.budget is not None:
+            self.budget.check()
         try:
             r = self.session.get(url, params=params, headers=headers, timeout=self.timeout)
         except requests.RequestException as e:
             raise NaverError(f"네이버 API 연결 실패: {e.__class__.__name__}") from e
+        finally:
+            if self.budget is not None:
+                self.budget.record()
         if r.status_code in (401, 403):
             raise NaverError(f"{name} {r.status_code} {_api_error_detail(r)}".strip(), fatal=True, auth=True)
         if r.status_code == 429:

@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .config import AppConfig, Product, naver_credentials
+from .config import AppConfig, Product
 from .matcher import Matcher
 from .naver import NaverClient, NaverError
 from .searchad import compact
@@ -77,15 +77,18 @@ def check_exposure(
     if not targets:
         return summary
     if client is None:
-        client = NaverClient(credentials=naver_credentials(), delay_seconds=s.request_delay_seconds)
+        from .collector import make_client  # 하루 API 호출 상한을 지키는 클라이언트
+
+        client = make_client(cfg, store)
     run_id = store.start_run("exposure")
     exposed: list[str] = []  # 순위가 높은 글부터 (상세 갱신 우선순위)
+    sources = list(s.exposure_sources)
     fails = 0
     try:
         for product, keyword in targets:
-            if fails >= MAX_FAILS:
+            if fails >= MAX_FAILS or not sources:
                 break
-            for source in s.exposure_sources:
+            for source in list(sources):
                 try:
                     if source == "kin":
                         items = client.search_kin_ranked(keyword, s.exposure_top_n)
@@ -95,6 +98,11 @@ def check_exposure(
                     store.record_exposure(product.id, keyword, source, [], error=str(e))
                     summary.errors.append(f"'{keyword}' ({source}): {e}")
                     log(f"  ! '{keyword}' {source} 확인 실패: {e}")
+                    if source == "kin" and client.credentials and (e.fatal or e.budget):
+                        # API 문제(호출 상한·키 오류)는 지식iN탭 순위만 빼고, 통합검색 확인은 계속한다
+                        sources.remove("kin")
+                        summary.errors.append("이번 확인에서는 지식iN탭 순위를 건너뜁니다 (API 사용 불가).")
+                        continue
                     fails += 1
                     if e.fatal or fails >= MAX_FAILS:
                         summary.errors.append(f"연속 {fails}번 실패해 이번 상위노출 확인을 중단합니다.")

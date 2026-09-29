@@ -1,6 +1,7 @@
 """한 번의 수집 실행: 검색 → 저장 → 분류 → 상세 정보 보강 → 정리."""
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -8,8 +9,9 @@ from typing import Callable
 from .config import AppConfig, naver_credentials
 from .matcher import Matcher
 from .naver import NaverClient, NaverError, RawQuestion
-from .storage import Store
+from .storage import ApiBudget, Store
 
+FEED_SHARE = 0.85          # 하루 API 상한 중 새 질문 수집에 쓰는 비율 (나머지는 상위노출 지식iN탭·점검용)
 WEB_MAX_PAGES = 3          # 웹 검색 모드에서 검색어당 최대 페이지 (1페이지 = 10건)
 WEB_MIN_INTERVAL = 30      # 웹 검색 모드의 최소 자동 수집 간격(분) — 네이버에 부담을 주지 않도록
 MAX_DETAIL_FAILS = 3       # 상세 페이지가 연속으로 이만큼 실패하면 이번 실행에선 중단
@@ -46,11 +48,20 @@ def resolve_mode(cfg: AppConfig) -> str:
 
 
 def effective_interval(cfg: AppConfig) -> int:
+    """실제로 쓰는 수집 간격(분).
+
+    API 모드에서는 검색어가 많아 하루 호출 상한을 넘을 것 같으면 간격을 자동으로 늘린다.
+    (상한의 FEED_SHARE 만 새 질문 수집에 쓰고, 나머지는 상위노출 확인·연결 점검 몫으로 남긴다)
+    """
     minutes = cfg.settings.interval_minutes
     if minutes <= 0:
         return 0
     if resolve_mode(cfg) == "web":
         return max(minutes, WEB_MIN_INTERVAL)
+    limit = cfg.settings.api_daily_limit
+    if limit > 0:
+        needed = math.ceil(len(cfg.all_search_queries()) * 24 * 60 / (limit * FEED_SHARE))
+        return max(minutes, needed)
     return minutes
 
 
@@ -59,6 +70,12 @@ def estimate_api_calls_per_day(cfg: AppConfig) -> int:
     if interval <= 0:
         return 0
     return len(cfg.all_search_queries()) * (24 * 60 // interval)
+
+
+def make_client(cfg: AppConfig, store: Store | None) -> NaverClient:
+    """하루 API 호출 상한을 지키는 네이버 클라이언트."""
+    budget = ApiBudget(store, cfg.settings.api_daily_limit) if store is not None else None
+    return NaverClient(credentials=naver_credentials(), delay_seconds=cfg.settings.request_delay_seconds, budget=budget)
 
 
 def collect(
@@ -72,7 +89,7 @@ def collect(
     s = cfg.settings
     summary = RunSummary(mode=mode)
     if client is None:
-        client = NaverClient(credentials=naver_credentials(), delay_seconds=s.request_delay_seconds)
+        client = make_client(cfg, store)
     run_id = store.start_run(mode)
     touched: list[str] = []
     new_ids: set[str] = set()

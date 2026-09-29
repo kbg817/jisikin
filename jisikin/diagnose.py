@@ -7,13 +7,13 @@ import sys
 
 from . import __version__
 from . import config as config_mod
-from .collector import effective_interval, estimate_api_calls_per_day, resolve_mode
+from .collector import effective_interval, estimate_api_calls_per_day, make_client, resolve_mode
 from .config import AppConfig
 from .drafter import ai_status
 from .exposure import all_targets
 from .naver import NaverClient, NaverError, debug_snippets
 from .searchad import SearchAdClient
-from .storage import Store
+from .storage import ApiBudget, Store
 
 
 def run_diagnostics(
@@ -30,13 +30,17 @@ def run_diagnostics(
     creds = config_mod.naver_credentials()
     mode = resolve_mode(cfg)
     lines.append(f"[{'OK' if creds else '--'}] 네이버 API 키: {'있음' if creds else '없음 (웹 검색 모드로 동작)'}")
-    lines.append(f"     수집 방식: {mode}, 자동 수집 간격: {effective_interval(cfg)}분")
+    interval = effective_interval(cfg)
+    stretched = f" (검색어가 많아 {cfg.settings.interval_minutes}분 → 자동 조정)" if interval > cfg.settings.interval_minutes > 0 else ""
+    lines.append(f"     수집 방식: {mode}, 자동 수집 간격: {interval}분{stretched}")
     if mode == "api":
-        calls = estimate_api_calls_per_day(cfg)
-        warn = "  ← 하루 한도(25,000회)에 가까움. 간격을 늘리거나 검색어를 줄이세요." if calls > 20000 else ""
-        lines.append(f"     예상 API 호출: 하루 약 {calls:,}회{warn}")
+        limit = cfg.settings.api_daily_limit
+        used = ApiBudget(store, limit).used() if store is not None else None
+        today = f", 오늘 사용 {used:,}회" if used is not None else ""
+        cap = f" / 하루 상한 {limit:,}회 (네이버 무료 25,000회)" if limit > 0 else " (상한 없음 — 25,000회를 넘으면 네이버가 거부하거나 과금될 수 있음)"
+        lines.append(f"     API 호출: 새 질문 수집에 하루 약 {estimate_api_calls_per_day(cfg):,}회 예상{today}{cap}")
 
-    client = client or NaverClient(credentials=creds, delay_seconds=cfg.settings.request_delay_seconds)
+    client = client or make_client(cfg, store)
     query = cfg.all_search_queries()[0]
     items = []
     try:

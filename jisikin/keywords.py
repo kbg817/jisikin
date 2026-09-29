@@ -31,6 +31,7 @@ SOURCE_LABELS = {
 }
 MODIFIERS = ["추천", "원인", "증상", "방법", "병원", "잘하는 곳", "후기", "비용"]
 DEFAULT_MAX = 20
+DEFAULT_MIN_VOLUME = 50  # 월간 검색수(PC+모바일)가 이보다 적으면 켜지 않음 (검색광고 API 로 검색수를 알 때만)
 REFRESH_DAYS = 7
 MAX_VOLUME_LOOKUPS = 60  # 검색광고 API 로 검색수를 조회할 후보 수 (5개씩 묶어서 조회)
 
@@ -82,15 +83,17 @@ class ExpandResult:
 
 def seed_settings(store: Store, product_id: str) -> dict:
     data = store.kv_get(f"seeds:{product_id}", {}) or {}
+    min_volume = data.get("min_volume")
     return {
         "seeds": list(data.get("seeds") or []),
         "max": int(data.get("max") or DEFAULT_MAX),
+        "min_volume": DEFAULT_MIN_VOLUME if min_volume is None else int(min_volume),
         "generated_at": data.get("generated_at"),
         "last_error": data.get("last_error"),
     }
 
 
-def save_seed_settings(store: Store, product_id: str, seeds: list[str], max_n: int) -> dict:
+def save_seed_settings(store: Store, product_id: str, seeds: list[str], max_n: int, min_volume: int | None = None) -> dict:
     cur = seed_settings(store, product_id)
     clean = []
     for s in seeds:
@@ -98,6 +101,8 @@ def save_seed_settings(store: Store, product_id: str, seeds: list[str], max_n: i
         if s and compact(s) not in {compact(c) for c in clean}:
             clean.append(s)
     cur.update(seeds=clean[:10], max=max(1, min(int(max_n), 60)))
+    if min_volume is not None:
+        cur["min_volume"] = max(0, int(min_volume))
     store.kv_set(f"seeds:{product_id}", cur)
     return cur
 
@@ -250,6 +255,7 @@ def generate_for_product(
                 for c in res.candidates
             ],
             settings["max"],
+            settings["min_volume"],
         )
     settings.update(generated_at=iso(now_kst()), last_error="; ".join(res.errors[:3]) or None)
     store.kv_set(f"seeds:{product_id}", settings)

@@ -92,6 +92,7 @@ class Settings:
     max_age_days: int = 14
     keep_days: int = 60
     port: int = 5000
+    api_daily_limit: int = 20000  # 네이버 검색 API 하루 호출 상한 (무료 25,000회를 넘지 않게). 0 이면 상한 없음
     exposure_interval_hours: int = 12
     exposure_top_n: int = 5
     exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin"])

@@ -112,13 +112,19 @@
           <dt>네이버 API 키</dt>
           <dd class="{{ 'ok-dot' if has_naver_keys else 'no-dot' }}">{{ "있음" if has_naver_keys else "없음" }}</dd>
           <dt>자동 수집</dt>
-          <dd>{{ (interval ~ "분마다") if interval else "꺼짐" }}</dd>
+          <dd>{{ (interval ~ "분마다") if interval else "꺼짐" }}
+            {% if interval and interval_setting and interval > interval_setting and mode == "api" %}
+            <br><span class="muted" style="font-size:12px">검색어가 많아 하루 호출 상한을 넘지 않도록 {{ interval_setting }}분 → {{ interval }}분으로 자동 조정했습니다.</span>
+            {% endif %}
+          </dd>
           <dt>검색어 수</dt>
           <dd>{{ query_count }}개</dd>
           {% if mode == "api" %}
           <dt>API 호출</dt>
-          <dd>하루 약 {{ "{:,}".format(api_calls) }}회 / 한도 {{ "{:,}".format(api_limit) }}
-            {% if api_calls > api_limit * 0.8 %}<br><b style="color:#dc2626">한도에 가깝습니다. 간격을 늘리거나 검색어를 줄이세요.</b>{% endif %}
+          <dd>오늘 <b>{{ "{:,}".format(api_used) }}회</b> 사용
+            {% if api_cap %} / 하루 상한 {{ "{:,}".format(api_cap) }}회{% endif %}
+            <br><span class="muted" style="font-size:12px">새 질문 수집에 하루 약 {{ "{:,}".format(api_calls) }}회 예상 · 네이버 무료 {{ "{:,}".format(api_limit) }}회/일</span>
+            {% if not api_cap %}<br><b style="color:#dc2626">상한이 꺼져 있습니다. 무료 한도를 넘으면 네이버가 거부하거나 과금될 수 있습니다.</b>{% endif %}
           </dd>
           {% endif %}
           <dt>상위노출 확인</dt>
