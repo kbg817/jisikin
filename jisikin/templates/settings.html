@@ -83,6 +83,25 @@
             <input name="NAVER_AD_SECRET_KEY" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.NAVER_AD_SECRET_KEY) if masked.NAVER_AD_SECRET_KEY else '붙여넣기' }}">
           </label>
         </details>
+        <details style="margin:4px 0 8px;font-size:13px" {% if social_keys.youtube or social_keys.threads %}open{% endif %}>
+          <summary><b>유튜브 · 쓰레드</b> <span class="muted">(선택 · 영상·글 수집)</span></summary>
+          <label>유튜브 Data API 키
+            <input name="YOUTUBE_API_KEY" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.YOUTUBE_API_KEY) if masked.YOUTUBE_API_KEY else 'AIza...' }}">
+          </label>
+          <p class="muted" style="font-size:12px;margin:0 0 8px">
+            <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">Google Cloud 콘솔</a>
+            → 프로젝트 만들기 → <b>YouTube Data API v3</b> [사용] → 사용자 인증 정보 → <b>API 키 만들기</b>.
+            무료 하루 10,000 (검색 1번 ≈ 101).
+          </p>
+          <label>쓰레드 액세스 토큰
+            <input name="THREADS_ACCESS_TOKEN" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.THREADS_ACCESS_TOKEN) if masked.THREADS_ACCESS_TOKEN else 'THAA...' }}">
+          </label>
+          <p class="muted" style="font-size:12px;margin:0">
+            <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener">Meta 개발자 앱</a>
+            → 사용 사례 <b>Threads API</b> → 권한 <b>threads_basic, threads_keyword_search</b> → 장기 토큰 발급.
+            앱 검수 전에는 내 계정 글만 검색됩니다. 토큰은 7일마다 자동으로 연장합니다.
+          </p>
+        </details>
         <p class="muted" style="font-size:12px;margin:4px 0 8px">
           비워둔 칸은 기존 값을 유지합니다. 지우려면 <b>삭제</b> 라고 입력하세요.
           키는 이 프로그램의 <code>.env</code> 파일에만 저장됩니다.
@@ -129,6 +148,17 @@
           {% endif %}
           <dt>상위노출 확인</dt>
           <dd>{% if exposure_hours %}{{ exposure_hours }}시간마다, 검색어 {{ exposure_count }}개{% elif exposure_count %}꺼짐 (검색어 {{ exposure_count }}개){% else %}검색어 없음{% endif %}</dd>
+          <dt>유튜브 · 쓰레드</dt>
+          <dd>유튜브 키 <span class="{{ 'ok-dot' if social_keys.youtube else 'no-dot' }}">{{ "있음" if social_keys.youtube else "없음" }}</span>
+            · 쓰레드 토큰 <span class="{{ 'ok-dot' if social_keys.threads else 'no-dot' }}">{{ "있음" if social_keys.threads else "없음" }}</span>
+            <br>{% if social_hours %}{{ social_hours }}시간마다, 검색어 {{ social_query_count }}개{% elif social_keys.youtube or social_keys.threads %}자동 수집 꺼짐 (social_interval_hours: 0){% else %}키를 넣으면 자동 수집{% endif %}
+            {% if social_keys.youtube %}<br><span class="muted" style="font-size:12px">유튜브 오늘 사용량 {{ "{:,}".format(yt_used) }}{% if yt_cap %} / 상한 {{ "{:,}".format(yt_cap) }}{% endif %}
+              · 1회 수집 ≈ {{ "{:,}".format(social_query_count * 101) }}</span>
+              {% if social_hours and yt_cap and social_query_count * 101 * (24 // social_hours) > yt_cap %}
+              <br><b style="color:#dc2626;font-size:12px">검색어가 많아 하루 상한을 넘습니다. social_interval_hours 를 늘리거나 social.keywords 를 줄이세요.</b>
+              {% endif %}
+            {% endif %}
+          </dd>
           <dt>AI 초안</dt>
           <dd class="{{ 'ok-dot' if ai_ok else 'no-dot' }}">{{ ai_reason }}</dd>
         </dl>
@@ -177,7 +207,7 @@
           {% for r in runs %}
           <tr>
             <td>{{ r.started_at[5:16].replace("T", " ") }}</td>
-            <td>{{ "상위노출" if r.mode == "exposure" else "새 질문" }}</td>
+            <td>{{ "상위노출" if r.mode == "exposure" else "유튜브·쓰레드" if r.mode == "social" else "새 질문" }}</td>
             <td>{{ r.new_total }}</td>
             <td>{{ r.fetched if r.mode == "exposure" else r.new_relevant }}</td>
             <td>{{ r.details }}</td>

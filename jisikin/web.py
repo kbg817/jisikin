@@ -21,13 +21,14 @@ from . import config as config_mod
 from .collector import collect, effective_interval, estimate_api_calls_per_day, resolve_mode
 from .config import AppConfig, ConfigError
 from .diagnose import run_diagnostics
-from .drafter import MAX_EXAMPLES, USAGE_KINDS, DraftError, ai_status, generate_draft, monthly_usage
+from .drafter import MAX_EXAMPLES, USAGE_KINDS, DraftError, ai_status, generate_draft, generate_social_draft, monthly_usage
 from .exposure import all_targets, check_exposure
 from .keywords import SOURCE_LABELS, due_products, ensure_default_seeds, generate_for_product, save_seed_settings, seed_settings
 from .matcher import Matcher
 from .migrations import migrate_config
 from .searchad import compact
-from .storage import STATUSES, TODO_STATUSES, ApiBudget, Store, iso, now_kst
+from .social import PLATFORMS, YouTubeBudget, collect_social, social_matcher, social_status
+from .storage import STATUSES, TODO_STATUSES, ApiBudget, Store, from_iso, iso, now_kst
 
 API_DAILY_LIMIT = 25000
 KRW_PER_USD = 1400  # 화면에 원화로 대략 보여줄 때만 쓰는 환율
@@ -44,18 +45,21 @@ class AppState:
         self.cfg: AppConfig = config_mod.load_config(self.config_path)
         self._default_seeds()
         self.running = False
-        self.running_kind = ""  # collect / exposure / keywords
+        self.running_kind = ""  # collect / exposure / keywords / social
         self.next_run_at: datetime | None = None
         self.next_exposure_at: datetime | None = None
+        self.next_social_at: datetime | None = None
         self._run_lock = threading.Lock()
         self._wake = threading.Event()
         self._force = False
         self._force_exposure = False
+        self._force_social = False
         self._pending_keywords: list[str] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         # 설정이 바뀌었을 수 있으니 시작할 때 한 번 전체 재분류
         self.store.classify(Matcher(self.cfg.products))
+        self.store.classify_social(social_matcher(self.cfg))
 
     def log(self, msg: str) -> None:
         line = f"{now_kst():%H:%M:%S} {msg}"
@@ -73,7 +77,8 @@ class AppState:
         self.cfg = cfg
         self._default_seeds()  # 새로 넣은 제품의 exposure.seeds
         n = self.store.classify(Matcher(cfg.products))
-        self.log(f"설정 저장 — 전체 재분류 완료 (관련 질문 {n}건)")
+        m = self.store.classify_social(social_matcher(cfg))
+        self.log(f"설정 저장 — 전체 재분류 완료 (관련 질문 {n}건, 유튜브·쓰레드 {m}건)")
         self._wake.set()  # 수집 주기 변경 반영
         return cfg
 
@@ -105,6 +110,19 @@ class AppState:
             "keywords", "검색어 자동 생성", lambda: generate_for_product(self.cfg, self.store, product_id, log=self.log)
         )
 
+    def run_social(self):
+        return self._run(
+            "social", "유튜브·쓰레드 수집",
+            lambda: collect_social(self.cfg, self.store, log=self.log, save_threads_token=self._save_threads_token),
+        )
+
+    def _save_threads_token(self, token: str) -> None:
+        config_mod.save_env_values({"THREADS_ACCESS_TOKEN": token}, self.env_path)
+
+    def social_interval_hours(self) -> int:
+        h = self.cfg.settings.social_interval_hours
+        return h if h > 0 and any(social_status().values()) else 0
+
     def exposure_targets(self):
         return all_targets(self.cfg, self.store)
 
@@ -124,6 +142,8 @@ class AppState:
                     self._force_exposure = True
             elif kind == "exposure":
                 self._force_exposure = True
+            elif kind == "social":
+                self._force_social = True
             else:
                 self._force = True
             self._wake.set()
@@ -133,7 +153,8 @@ class AppState:
         if kind == "keywords":
             target, args = self.run_keywords, (product,)
         else:
-            target, args = (self.run_exposure if kind == "exposure" else self.run_collection), ()
+            runners = {"exposure": self.run_exposure, "social": self.run_social}
+            target, args = runners.get(kind, self.run_collection), ()
         threading.Thread(target=target, args=args, daemon=True).start()
         return True
 
@@ -152,7 +173,7 @@ class AppState:
             except Exception:
                 self.log("스케줄러 오류:\n" + traceback.format_exc())
             wait = 60.0
-            for t in (self.next_run_at, self.next_exposure_at):
+            for t in (self.next_run_at, self.next_exposure_at, self.next_social_at):
                 if t:
                     wait = min(wait, (t - now_kst()).total_seconds())
             self._wake.wait(timeout=max(1.0, wait))
@@ -195,6 +216,22 @@ class AppState:
             self.next_exposure_at = None
         elif self.next_exposure_at > now + timedelta(hours=hours):
             self.next_exposure_at = now + timedelta(hours=hours)
+
+        # 4) 유튜브 · 쓰레드
+        hours = self.social_interval_hours()
+        now = now_kst()
+        if hours > 0 and self.next_social_at is None:
+            runs = self.store.recent_runs(1, mode="social")  # 재시작해도 주기를 이어서
+            last = from_iso(runs[0]["started_at"]) if runs else None
+            self.next_social_at = last + timedelta(hours=hours) if last else now
+        if self._force_social or (hours > 0 and now >= self.next_social_at):
+            self._force_social = False
+            self.run_social()
+            self.next_social_at = now_kst() + timedelta(hours=hours) if hours > 0 else None
+        elif hours <= 0:
+            self.next_social_at = None
+        elif self.next_social_at > now + timedelta(hours=hours):
+            self.next_social_at = now + timedelta(hours=hours)
 
 
 def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
@@ -277,7 +314,10 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
 
     def product_payload(cfg: AppConfig) -> list[dict]:
         return [
-            {"id": p.id, "name": p.name, "color": p.color, "url": p.url, "categories": [c.name for c in p.categories]}
+            {
+                "id": p.id, "name": p.name, "color": p.color, "url": p.url,
+                "categories": [c.name for c in p.categories], "social_queries": p.social_queries(),
+            }
             for p in cfg.products
         ]
 
@@ -326,7 +366,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     def api_meta():
         cfg = state.cfg
         ok, reason = ai_status()
-        runs = state.store.recent_runs(1, exclude_mode="exposure")
+        runs = state.store.recent_runs(1, exclude_mode=("exposure", "social"))
+        social_runs = state.store.recent_runs(1, mode="social")
         exp_runs = state.store.recent_runs(1, mode="exposure")
         names = people()
         stats = state.store.answer_stats()
@@ -352,6 +393,14 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                 "next_at": iso(state.next_exposure_at),
                 "last_run": exp_runs[0] if exp_runs else None,
                 "sources": [{"id": s, "name": config_mod.EXPOSURE_SOURCES[s]} for s in cfg.settings.exposure_sources],
+            },
+            social={
+                "platforms": social_status(),
+                "counts": state.store.social_counts(cfg.settings.social_max_age_days),
+                "interval_hours": state.social_interval_hours(),
+                "next_at": iso(state.next_social_at),
+                "last_run": social_runs[0] if social_runs else None,
+                "queries": len(cfg.social_queries()),
             },
         )
 
@@ -475,6 +524,89 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         if not state.exposure_targets():
             return jsonify(error="확인할 검색어가 없습니다. [검색어 관리]에서 메인 키워드를 넣어주세요"), 400
         return jsonify(started=state.trigger("exposure"))
+
+    # ------------------------------------------------------------ 유튜브 · 쓰레드
+
+    SOCIAL_KEEP = (
+        "post_id platform url title body author author_url thumbnail published_at views likes comments queries "
+        "product score categories matches status status_by status_changed_at draft priority first_seen"
+    ).split()
+
+    @app.get("/api/social")
+    def api_social():
+        a = request.args
+        platform = a.get("platform", "youtube")
+        if platform not in PLATFORMS:
+            return jsonify(error="잘못된 요청"), 400
+        rows = state.store.list_social(
+            platform,
+            product=a.get("product") or None,
+            category=a.get("category") or None,
+            status=a.get("status", "todo"),
+            include_low=a.get("include_low") == "1",
+            max_age_days=state.cfg.settings.social_max_age_days,
+            query=(a.get("q") or "").strip(),
+            sort=a.get("sort", "priority"),
+        )
+        items = []
+        for r in rows:
+            item = {k: r.get(k) for k in SOCIAL_KEEP}
+            item["body"] = (r.get("body") or "")[:600]
+            items.append(item)
+        return jsonify(items=items)
+
+    def social_product(post: dict):
+        cfg = state.cfg
+        product = cfg.product(post.get("product"))
+        if product is None and post.get("matches"):
+            product = cfg.product(post["matches"][0].get("product_id"))
+        return product
+
+    @app.post("/api/social/<post_id>/status")
+    def api_social_status(post_id: str):
+        require_api_header()
+        data = request.get_json(silent=True) or {}
+        status = data.get("status")
+        if status not in STATUSES:
+            return jsonify(error="잘못된 상태"), 400
+        if isinstance(data.get("draft"), str):
+            state.store.save_social_draft_edit(post_id, data["draft"])
+        if not state.store.set_social_status(post_id, status, by=g.user["username"]):
+            return jsonify(error="글을 찾을 수 없습니다"), 404
+        return jsonify(ok=True)
+
+    @app.post("/api/social/<post_id>/draft")
+    def api_social_draft(post_id: str):
+        require_api_header()
+        post = state.store.get_social(post_id)
+        if not post:
+            return jsonify(error="글을 찾을 수 없습니다"), 404
+        product = social_product(post)
+        if product is None:
+            return jsonify(error="어느 제품과 관련된 글인지 알 수 없습니다"), 400
+        try:
+            draft = generate_social_draft(state.cfg, product, post, store=state.store)
+        except DraftError as e:
+            return jsonify(error=str(e)), 400
+        state.store.set_social_draft(post_id, draft)
+        return jsonify(draft=draft)
+
+    @app.post("/api/social/<post_id>/draft/save")
+    def api_social_draft_save(post_id: str):
+        require_api_header()
+        text = (request.get_json(silent=True) or {}).get("draft")
+        if not isinstance(text, str) or len(text) > 10000:
+            return jsonify(error="잘못된 요청"), 400
+        if not state.store.save_social_draft_edit(post_id, text):
+            return jsonify(error="글을 찾을 수 없습니다"), 404
+        return jsonify(ok=True)
+
+    @app.post("/api/social/collect")
+    def api_social_collect():
+        require_api_header()
+        if not any(social_status().values()):
+            return jsonify(error="유튜브 API 키나 쓰레드 토큰이 없습니다. [설정] > API 키에 넣어 주세요"), 400
+        return jsonify(started=state.trigger("social"))
 
     # ------------------------------------------------------------ 검색어 관리 (메인 키워드 → 세부 검색어)
 
@@ -702,6 +834,10 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                 return redirect(url_for("settings", key_error=str(e)))
             state.log("API 키 저장 — 새 설정으로 수집을 시작합니다")
             state.trigger()
+            if values.get("THREADS_ACCESS_TOKEN"):
+                state.store.kv_set("threads_token_refreshed_at", iso(now_kst()))  # 막 받은 토큰은 바로 연장할 필요 없음
+            if values.get("YOUTUBE_API_KEY") or values.get("THREADS_ACCESS_TOKEN"):
+                state.trigger("social")
             if any(k.startswith("NAVER_AD_") and v for k, v in values.items()):
                 # 검색광고 키가 생기면 월간 검색수로 검색어를 다시 골라야 하므로 바로 다시 생성
                 for p in state.cfg.products:
@@ -791,6 +927,12 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             query_count=len(cfg.all_search_queries()),
             exposure_count=len(state.exposure_targets()),
             exposure_hours=state.exposure_interval_hours(),
+            social_keys=social_status(),
+            social_hours=state.social_interval_hours(),
+            social_setting_hours=cfg.settings.social_interval_hours,
+            social_query_count=len(cfg.social_queries()),
+            yt_used=YouTubeBudget(state.store, cfg.settings.youtube_daily_units).used(),
+            yt_cap=cfg.settings.youtube_daily_units,
             api_calls=estimate_api_calls_per_day(cfg),
             api_limit=API_DAILY_LIMIT,
             api_cap=cfg.settings.api_daily_limit,
