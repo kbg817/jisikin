@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -141,6 +142,36 @@ CREATE TABLE IF NOT EXISTS answer_examples (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ex_doc ON answer_examples(doc_id) WHERE doc_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ex_product ON answer_examples(product, starred);
+
+-- 유튜브 영상 · 쓰레드 글 (상태 값은 questions 와 같음: answered = 댓글완료)
+CREATE TABLE IF NOT EXISTS social_posts (
+    post_id           TEXT PRIMARY KEY,            -- yt:<영상 id> / th:<글 id>
+    platform          TEXT NOT NULL,               -- youtube / threads
+    url               TEXT NOT NULL,
+    title             TEXT NOT NULL DEFAULT '',
+    body              TEXT NOT NULL DEFAULT '',
+    author            TEXT NOT NULL DEFAULT '',
+    author_url        TEXT NOT NULL DEFAULT '',
+    thumbnail         TEXT NOT NULL DEFAULT '',
+    published_at      TEXT,
+    views             INTEGER,
+    likes             INTEGER,
+    comments          INTEGER,
+    queries           TEXT NOT NULL DEFAULT '[]',  -- 이 글을 찾은 검색어
+    product           TEXT,
+    score             REAL NOT NULL DEFAULT 0,
+    categories        TEXT NOT NULL DEFAULT '[]',
+    matches           TEXT NOT NULL DEFAULT '[]',
+    status            TEXT NOT NULL DEFAULT 'new',
+    status_by         TEXT,
+    status_changed_at TEXT,
+    first_seen        TEXT NOT NULL,
+    last_seen         TEXT NOT NULL,
+    draft             TEXT,
+    draft_at          TEXT,
+    draft_edited      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_social_list ON social_posts(platform, product, status);
 """
 
 
@@ -345,7 +376,7 @@ class Store:
             return changed
 
     def answer_stats(self, now: datetime | None = None) -> dict[str, dict[str, int]]:
-        """직원별 답변완료 수: {username: {today, week, total}} ('' = 로그인 없이 사용)"""
+        """직원별 답변완료 수 (지식iN 답변 + 유튜브·쓰레드 댓글): {username: {today, week, total}} ('' = 로그인 없이 사용)"""
         now = now or now_kst()
         today = iso(now.replace(hour=0, minute=0, second=0, microsecond=0))
         week = iso((now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0))
@@ -354,9 +385,10 @@ class Store:
             # 같은 글을 여러 번 답변완료로 눌러도 한 번만 센다 (마지막 기록 기준)
             rows = c.execute(
                 """SELECT a.username, a.at FROM activity a
-                   JOIN questions q ON q.doc_id = a.doc_id AND q.status = 'answered'
                    WHERE a.status = 'answered'
-                     AND a.id = (SELECT MAX(id) FROM activity b WHERE b.doc_id = a.doc_id AND b.status = 'answered')"""
+                     AND a.id = (SELECT MAX(id) FROM activity b WHERE b.doc_id = a.doc_id AND b.status = 'answered')
+                     AND (EXISTS (SELECT 1 FROM questions q WHERE q.doc_id = a.doc_id AND q.status = 'answered')
+                          OR EXISTS (SELECT 1 FROM social_posts s WHERE s.post_id = a.doc_id AND s.status = 'answered'))"""
             ).fetchall()
         for r in rows:
             s = out.setdefault(r["username"], {"today": 0, "week": 0, "total": 0})
@@ -704,14 +736,17 @@ class Store:
         with self._conn() as c:
             c.execute(f"UPDATE runs SET {cols} WHERE id=?", (*fields.values(), run_id))
 
-    def recent_runs(self, limit: int = 10, mode: str | None = None, exclude_mode: str | None = None) -> list[dict]:
+    def recent_runs(
+        self, limit: int = 10, mode: str | None = None, exclude_mode: str | tuple[str, ...] | None = None
+    ) -> list[dict]:
         sql, args = "SELECT * FROM runs", []
         if mode:
             sql += " WHERE mode=?"
             args.append(mode)
         elif exclude_mode:
-            sql += " WHERE mode IS NULL OR mode<>?"
-            args.append(exclude_mode)
+            excluded = (exclude_mode,) if isinstance(exclude_mode, str) else tuple(exclude_mode)
+            sql += f" WHERE mode IS NULL OR mode NOT IN ({','.join('?' * len(excluded))})"
+            args.extend(excluded)
         sql += " ORDER BY id DESC LIMIT ?"
         args.append(limit)
         with self._conn() as c:
@@ -854,6 +889,195 @@ class Store:
             out.append(g)
         return out
 
+    # ------------------------------------------------------------ 유튜브 · 쓰레드
+
+    def upsert_social(self, post, query: str, now: datetime | None = None) -> bool:
+        """영상/글을 저장한다 (post: social.SocialPost). 처음 본 글이면 True. 다시 보면 조회수 등만 갱신."""
+        now_s = iso(now or now_kst())
+        with self._conn() as c:
+            row = c.execute("SELECT queries FROM social_posts WHERE post_id=?", (post.post_id,)).fetchone()
+            if row is None:
+                c.execute(
+                    """INSERT INTO social_posts (post_id, platform, url, title, body, author, author_url, thumbnail,
+                                                 published_at, views, likes, comments, queries, first_seen, last_seen)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        post.post_id, post.platform, post.url, post.title, post.body, post.author, post.author_url,
+                        post.thumbnail, iso(post.published_at), post.views, post.likes, post.comments,
+                        json.dumps([query], ensure_ascii=False), now_s, now_s,
+                    ),
+                )
+                return True
+            queries = json.loads(row["queries"] or "[]")
+            if query not in queries:
+                queries.append(query)
+            c.execute(
+                """UPDATE social_posts SET last_seen=?, queries=?,
+                          body=CASE WHEN length(?) > length(body) THEN ? ELSE body END,
+                          views=COALESCE(?, views), likes=COALESCE(?, likes), comments=COALESCE(?, comments)
+                   WHERE post_id=?""",
+                (
+                    now_s, json.dumps(queries[-20:], ensure_ascii=False), post.body, post.body,
+                    post.views, post.likes, post.comments, post.post_id,
+                ),
+            )
+            return False
+
+    def classify_social(self, matcher: Matcher, post_ids: list[str] | None = None) -> int:
+        relevant = 0
+        with self._conn() as c:
+            if post_ids is None:
+                rows = c.execute("SELECT post_id, title, body FROM social_posts").fetchall()
+            else:
+                rows = []
+                ids = list(dict.fromkeys(post_ids))
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i : i + 500]
+                    rows += c.execute(
+                        f"SELECT post_id, title, body FROM social_posts WHERE post_id IN ({','.join('?' * len(chunk))})",
+                        chunk,
+                    ).fetchall()
+            for r in rows:
+                # 쓰레드 글은 제목이 없으므로 첫 줄을 제목처럼 본다
+                title, body = r["title"], r["body"] or ""
+                if not title:
+                    title, _, body = body.partition("\n")
+                matches = matcher.classify(title, body)
+                best = matcher.best(matches)
+                if best:
+                    relevant += 1
+                c.execute(
+                    "UPDATE social_posts SET product=?, score=?, categories=?, matches=? WHERE post_id=?",
+                    (
+                        best.product_id if best else None,
+                        best.score if best else (matches[0].score if matches else 0),
+                        json.dumps(best.categories if best else [], ensure_ascii=False),
+                        json.dumps([m.to_dict() for m in matches], ensure_ascii=False),
+                        r["post_id"],
+                    ),
+                )
+        return relevant
+
+    def get_social(self, post_id: str) -> dict | None:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM social_posts WHERE post_id=?", (post_id,)).fetchone()
+        return _row_to_dict(row, ("queries", "categories", "matches")) if row else None
+
+    def set_social_status(self, post_id: str, status: str, by: str = "", now: datetime | None = None) -> bool:
+        if status not in STATUSES:
+            raise ValueError(status)
+        now_s = iso(now or now_kst())
+        with self._conn() as c:
+            changed = c.execute(
+                "UPDATE social_posts SET status=?, status_changed_at=?, status_by=? WHERE post_id=?",
+                (status, now_s, by or None, post_id),
+            ).rowcount > 0
+            if changed:
+                c.execute("INSERT INTO activity (doc_id, username, status, at) VALUES (?,?,?,?)", (post_id, by, status, now_s))
+            return changed
+
+    def set_social_draft(self, post_id: str, draft: str) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE social_posts SET draft=?, draft_at=?, draft_edited=0 WHERE post_id=?", (draft, iso(now_kst()), post_id)
+            )
+
+    def save_social_draft_edit(self, post_id: str, text: str) -> bool:
+        text = (text or "").strip()
+        with self._conn() as c:
+            row = c.execute("SELECT draft FROM social_posts WHERE post_id=?", (post_id,)).fetchone()
+            if row is None:
+                return False
+            if text and text != (row["draft"] or "").strip():
+                c.execute(
+                    "UPDATE social_posts SET draft=?, draft_at=?, draft_edited=1 WHERE post_id=?",
+                    (text, iso(now_kst()), post_id),
+                )
+            return True
+
+    def list_social(
+        self,
+        platform: str,
+        product: str | None = None,
+        category: str | None = None,
+        status: str = "todo",
+        include_low: bool = False,
+        max_age_days: int | None = None,
+        query: str = "",
+        sort: str = "priority",
+        limit: int = 300,
+        now: datetime | None = None,
+    ) -> list[dict]:
+        now = now or now_kst()
+        where, args = ["platform=?"], [platform]
+        if product:
+            if include_low:
+                where.append("(product=? OR matches LIKE ?)")
+                args += [product, f'%"product_id": "{product}"%']
+            else:
+                where.append("product=?")
+                args.append(product)
+        elif not include_low:
+            where.append("product IS NOT NULL")
+        if category:
+            where.append("categories LIKE ?")
+            args.append("%" + json.dumps(category, ensure_ascii=False) + "%")
+        if status == "todo":
+            where.append("status IN ('new','opened')")
+        elif status in STATUSES:
+            where.append("status=?")
+            args.append(status)
+        if max_age_days and status == "todo":
+            where.append("(published_at IS NULL OR published_at >= ?)")
+            args.append(iso(now - timedelta(days=max_age_days)))
+        if query:
+            where.append("(title LIKE ? OR body LIKE ? OR author LIKE ?)")
+            args += [f"%{query}%"] * 3
+        sql = "SELECT * FROM social_posts WHERE " + " AND ".join(where) + " ORDER BY published_at DESC LIMIT 2000"
+        with self._conn() as c:
+            rows = [_row_to_dict(r, ("queries", "categories", "matches")) for r in c.execute(sql, args).fetchall()]
+        for r in rows:
+            r["priority"] = social_priority(r, now)
+        if sort == "priority":
+            rows.sort(key=lambda r: (r["priority"], r.get("published_at") or ""), reverse=True)
+        elif sort == "views":
+            rows.sort(key=lambda r: (r.get("views") or -1, r.get("published_at") or ""), reverse=True)
+        elif sort == "status":
+            rows.sort(key=lambda r: r.get("status_changed_at") or "", reverse=True)
+        return rows[:limit]
+
+    def social_counts(self, max_age_days: int | None = None, now: datetime | None = None) -> dict:
+        """{platform: {product: {total, new, categories}}} — 할 일(new/opened)만."""
+        now = now or now_kst()
+        sql = "SELECT platform, product, categories, status FROM social_posts WHERE product IS NOT NULL AND status IN ('new','opened')"
+        args: list = []
+        if max_age_days:
+            sql += " AND (published_at IS NULL OR published_at >= ?)"
+            args.append(iso(now - timedelta(days=max_age_days)))
+        out: dict[str, dict] = {"youtube": {}, "threads": {}}
+        with self._conn() as c:
+            for r in c.execute(sql, args):
+                p = out.setdefault(r["platform"], {}).setdefault(r["product"], {"total": 0, "new": 0, "categories": {}})
+                p["total"] += 1
+                if r["status"] == "new":
+                    p["new"] += 1
+                for cat in json.loads(r["categories"] or "[]"):
+                    p["categories"][cat] = p["categories"].get(cat, 0) + 1
+        return out
+
+    def purge_social(self, keep_days: int, now: datetime | None = None) -> int:
+        """오래된 미처리/무관 글 정리. 댓글완료는 보관."""
+        now = now or now_kst()
+        old = iso(now - timedelta(days=keep_days))
+        old_irrelevant = iso(now - timedelta(days=min(7, keep_days)))
+        with self._conn() as c:
+            n = c.execute("DELETE FROM social_posts WHERE status<>'answered' AND last_seen < ?", (old,)).rowcount
+            n += c.execute(
+                "DELETE FROM social_posts WHERE product IS NULL AND status='new' AND last_seen < ?", (old_irrelevant,)
+            ).rowcount
+            c.execute("DELETE FROM kv WHERE key LIKE 'yt_units:%' AND key < ?", (f"yt_units:{now - timedelta(days=40):%Y-%m-%d}",))
+        return n
+
 
 class ApiBudget:
     """네이버 검색 API 하루 호출 수를 세고, 상한에 닿으면 더 부르지 않게 막는다.
@@ -916,9 +1140,9 @@ def _migrate(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE questions ADD COLUMN draft_edited INTEGER NOT NULL DEFAULT 0")
 
 
-def _row_to_dict(row: sqlite3.Row) -> dict:
+def _row_to_dict(row: sqlite3.Row, json_keys: tuple[str, ...] = ("sources", "categories", "matches")) -> dict:
     d = dict(row)
-    for key in ("sources", "categories", "matches"):
+    for key in json_keys:
         try:
             d[key] = json.loads(d.get(key) or "[]")
         except ValueError:
@@ -959,4 +1183,27 @@ def priority(q: dict, now: datetime) -> float:
             p += 1
     if (q.get("reward") or 0) > 0:
         p += 1
+    return p
+
+
+def social_priority(post: dict, now: datetime) -> float:
+    """추천순: 관련도 + 최근 글일수록 + (유튜브) 조회수가 많을수록 댓글이 많이 읽힌다."""
+    p = float(post.get("score") or 0)
+    published = from_iso(post.get("published_at"))
+    if published:
+        age_h = (now - published).total_seconds() / 3600
+        if age_h < 6:
+            p += 3
+        elif age_h < 24:
+            p += 2
+        elif age_h < 72:
+            p += 1
+        elif age_h > 24 * 7:
+            p -= 1
+    views = post.get("views")
+    if views:
+        p += min(2.0, math.log10(max(views, 1)) / 2)  # 100회 +1, 1만 회 이상 +2
+    comments = post.get("comments")
+    if comments is not None and comments < 5:
+        p += 1  # 댓글이 적은 영상은 내 댓글이 위에 보이기 쉬움
     return p

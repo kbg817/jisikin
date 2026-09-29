@@ -265,3 +265,15 @@ details.panel summary { cursor: pointer; font-size: 14px; }
   .view { flex: 1; padding: 8px 6px 10px; }
   .view .muted { display: none; }
 }
+
+/* 유튜브 · 쓰레드 */
+.card.social .thumb { flex: none; width: 168px; }
+.card.social .thumb img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--chip); }
+.card.social .meta a { color: inherit; }
+.card.social.th .title { font-weight: 500; }
+.notice .links { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.notice .links a { padding: 1px 8px; border: 1px solid var(--warn-line); border-radius: 999px; text-decoration: none; font-size: 13px; }
+@media (max-width: 640px) {
+  .card.social { flex-wrap: wrap; }
+  .card.social .thumb { width: 100%; }
+}

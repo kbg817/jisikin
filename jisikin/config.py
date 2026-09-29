@@ -28,6 +28,8 @@ ENV_KEYS = (
     "NAVER_AD_CUSTOMER_ID",
     "NAVER_AD_ACCESS_LICENSE",
     "NAVER_AD_SECRET_KEY",
+    "YOUTUBE_API_KEY",
+    "THREADS_ACCESS_TOKEN",
 )
 
 DEFAULT_AI_MODEL = "claude-sonnet-5-5"
@@ -62,6 +64,13 @@ class Exposure:
 
 
 @dataclass
+class Social:
+    """유튜브·쓰레드에서 검색할 말. 비워두면 제품 이름으로 검색한다."""
+
+    keywords: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Product:
     id: str
     name: str
@@ -74,6 +83,10 @@ class Product:
     color: str = "#2563eb"
     answer_guide: str = ""
     exposure: Exposure = field(default_factory=Exposure)
+    social: Social = field(default_factory=Social)
+
+    def social_queries(self) -> list[str]:
+        return _dedupe(self.social.keywords or [self.name])
 
     def search_queries(self) -> list[str]:
         queries = list(self.keywords)
@@ -100,6 +113,12 @@ class Settings:
     exposure_interval_hours: int = 12
     exposure_top_n: int = 5
     exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin"])
+    # 유튜브 · 쓰레드
+    social_interval_hours: int = 6       # 자동 수집 주기(시간). 0 이면 끔
+    social_max_age_days: int = 14        # 이보다 오래된 영상·글은 찾지 않고 할 일에서도 숨김
+    youtube_results: int = 25            # 검색어당 영상 수 (최대 50)
+    youtube_daily_units: int = 9000      # 유튜브 API 하루 사용량 상한 (무료 10,000). 검색 1번 ≈ 101
+    threads_results: int = 50            # 검색어당 쓰레드 글 수 (최대 100)
 
 
 @dataclass
@@ -107,6 +126,7 @@ class AISettings:
     model: str = DEFAULT_AI_MODEL
     effort: str = "low"
     common_guide: str = ""
+    social_guide: str = ""  # 유튜브 댓글 · 쓰레드 답글 초안 공통 원칙
 
 
 @dataclass
@@ -126,6 +146,13 @@ class AppConfig:
 
     def exposure_targets(self) -> list[tuple[Product, str]]:
         return [(p, q) for p in self.products for q in p.exposure.queries()]
+
+    def social_queries(self) -> list[str]:
+        """유튜브·쓰레드에서 검색할 말 (모든 제품, 중복 제거)."""
+        queries: list[str] = []
+        for p in self.products:
+            queries.extend(p.social_queries())
+        return _dedupe(queries)
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -206,6 +233,11 @@ def parse_config(text: str) -> AppConfig:
     settings.results_per_keyword = max(1, min(settings.results_per_keyword, 100))
     settings.request_delay_seconds = max(0.0, settings.request_delay_seconds)
     settings.exposure_top_n = max(1, min(settings.exposure_top_n, 20))
+    settings.social_interval_hours = max(0, settings.social_interval_hours)
+    settings.social_max_age_days = max(1, min(settings.social_max_age_days, 365))
+    settings.youtube_results = max(1, min(settings.youtube_results, 50))
+    settings.youtube_daily_units = max(0, settings.youtube_daily_units)
+    settings.threads_results = max(1, min(settings.threads_results, 100))
     raw_sources = (data.get("settings") or {}).get("exposure_sources")
     if raw_sources is not None:
         sources = _str_list(raw_sources, "settings.exposure_sources")
@@ -274,6 +306,10 @@ def parse_config(text: str) -> AppConfig:
         )
         if exposure.regions and not exposure.region_terms:
             raise ConfigError(f"{where}.exposure 에 regions 를 넣었다면 region_terms (예: [건선, 건선 피부과]) 도 넣어 주세요.")
+        rs = rp.get("social") or {}
+        if not isinstance(rs, dict):
+            raise ConfigError(f"{where}.social 은 keywords 항목을 가져야 합니다. 예) social: {{keywords: [신의소리]}}")
+        social = Social(keywords=_str_list(rs.get("keywords"), f"{where}.social.keywords"))
 
         products.append(
             Product(
@@ -288,6 +324,7 @@ def parse_config(text: str) -> AppConfig:
                 color=str(rp.get("color") or "#2563eb").strip(),
                 answer_guide=str(rp.get("answer_guide") or "").strip(),
                 exposure=exposure,
+                social=social,
             )
         )
     return AppConfig(settings=settings, ai=ai, products=products)
@@ -394,3 +431,11 @@ def searchad_credentials() -> tuple[str, str, str] | None:
     """네이버 검색광고 API (월간 검색수 조회용, 선택)."""
     values = tuple(os.environ.get(k, "").strip() for k in ("NAVER_AD_CUSTOMER_ID", "NAVER_AD_ACCESS_LICENSE", "NAVER_AD_SECRET_KEY"))
     return values if all(values) else None  # type: ignore[return-value]
+
+
+def youtube_key() -> str | None:
+    return os.environ.get("YOUTUBE_API_KEY", "").strip() or None
+
+
+def threads_token() -> str | None:
+    return os.environ.get("THREADS_ACCESS_TOKEN", "").strip() or None

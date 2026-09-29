@@ -6,6 +6,8 @@
   <nav class="views" id="views">
     <button class="view active" data-view="feed">새 질문 <span class="muted">실시간</span></button>
     <button class="view" data-view="exposure">상위노출 글 <span class="muted">검색 상위에 뜨는 글</span></button>
+    <button class="view" data-view="youtube">유튜브 <span class="muted">영상</span></button>
+    <button class="view" data-view="threads">쓰레드 <span class="muted">글</span></button>
   </nav>
   <nav class="tabs" id="tabs"></nav>
   <div class="chips" id="chips"></div>
@@ -14,6 +16,24 @@
     <span class="exp-status" id="exp-status"></span>
     <label title="답변완료/제외한 글 숨기기"><input type="checkbox" id="x-unanswered"> 처리 안 한 글만</label>
     <button class="btn primary small" id="exp-check-btn" type="button">지금 확인</button>
+  </div>
+
+  <div class="toolbar" id="social-toolbar" hidden>
+    <span class="exp-status" id="social-status"></span>
+    <select id="s-status" title="상태">
+      <option value="todo">할 일</option>
+      <option value="answered">댓글완료</option>
+      <option value="skipped">제외함</option>
+      <option value="all">전체</option>
+    </select>
+    <select id="s-sort" title="정렬">
+      <option value="priority">추천순</option>
+      <option value="latest">최신순</option>
+      <option value="views">조회수순</option>
+    </select>
+    <label title="제품 키워드 점수가 min_score 미만인 글도 표시 (검색어 튜닝용)"><input type="checkbox" id="s-low"> 관련도 낮은 글도</label>
+    <input type="search" id="s-q" placeholder="제목·내용·작성자 검색">
+    <button class="btn primary small" id="social-collect-btn" type="button">지금 찾기</button>
   </div>
 
   <div class="toolbar" id="feed-toolbar">

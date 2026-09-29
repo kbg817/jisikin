@@ -87,9 +87,35 @@ def _ai_sonnet(text: str, example_text: str) -> str | None:
     return None if new == section else text[: m.end()] + new + text[end:]
 
 
+_SOCIAL_RE = re.compile(r"^    social:[ \t]*(?:#.*)?\n(?:      .*\n)*", re.M)
+
+
+def _social(text: str, example_text: str) -> str | None:
+    """제품마다 유튜브·쓰레드 검색어(social:)가 없으면 예시 설정의 것을 answer_guide 앞에 넣는다."""
+    parts = split_products(text)
+    ex = split_products(example_text)
+    if parts is None or ex is None:
+        return None
+    head, blocks, tail = parts
+    example_social = {pid: m.group(0) for pid, block in ex[1] if (m := _SOCIAL_RE.search(block))}
+    out = []
+    for pid, block in blocks:
+        social = example_social.get(pid)
+        if social and not _SOCIAL_RE.search(block):
+            guide = re.search(r"^    answer_guide:", block, re.M)
+            if guide:
+                block = block[: guide.start()] + social + block[guide.start() :]
+            else:
+                block = block.rstrip("\n") + "\n" + social
+        out.append((pid, block))
+    new = join_products(head, out, tail)
+    return None if new == text else new
+
+
 MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-09-myeongun", "명운연구소 추가, 제품 순서 변경", _myeongun),
     ("2026-09-ai-sonnet", "AI 초안 모델 Sonnet 5.5 · 생각 깊이 low", _ai_sonnet),
+    ("2026-10-social", "제품별 유튜브·쓰레드 검색어(social) 추가", _social),
 ]
 
 

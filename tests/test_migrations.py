@@ -37,7 +37,9 @@ def test_adds_myeongun_and_reorders_keeping_user_edits(tmp_path):
     path.write_text(OLD, encoding="utf-8")
     store = Store(":memory:")
     logs = []
-    assert migrate_config(path, store, log=logs.append) == ["명운연구소 추가, 제품 순서 변경"]
+    assert migrate_config(path, store, log=logs.append) == [
+        "명운연구소 추가, 제품 순서 변경", "제품별 유튜브·쓰레드 검색어(social) 추가",
+    ]
     assert ids(path) == ["sinui", "myeongun", "daksaren", "eumpa"]
     text = path.read_text(encoding="utf-8")
     assert "interval_minutes: 5   # 직접 바꾼 값" in text and "내가 넣은 키워드" in text and "# 메모: 내가 단 주석" in text
