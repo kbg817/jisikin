@@ -335,7 +335,7 @@ function cardHtml(q) {
       </a>
       ${snippet ? `<p class="snippet">${highlight(snippet, terms)}</p>` : ""}
       <div class="meta">
-        ${p ? `<span class="badge product">${esc(p.name)}</span>` : `<span class="badge">관련도 낮음${lowProduct ? " · " + esc(lowProduct.name) : ""}</span>`}
+        ${productBadge(p, lowProduct)}
         ${cats.map((c) => `<span class="badge">${esc(c)}</span>`).join("")}
         ${ansBadge}
         ${q.reward ? `<span class="badge">내공 ${q.reward}</span>` : ""}
@@ -348,6 +348,12 @@ function cardHtml(q) {
     </div>
     <div class="actions">${actionsHtml(q)}</div>
   </article>`;
+}
+
+// 제품 탭을 골랐으면 카드마다 제품명을 또 보여주지 않음 (카드 왼쪽 색 띠로 구분)
+function productBadge(p, lowProduct) {
+  if (!p) return `<span class="badge">관련도 낮음${lowProduct && !state.product ? " · " + esc(lowProduct.name) : ""}</span>`;
+  return state.product ? "" : `<span class="badge product">${esc(p.name)}</span>`;
 }
 
 function statusLabel(q, social) {
@@ -464,7 +470,7 @@ function socialCardHtml(q) {
       </a>
       ${body.trim() ? `<p class="snippet">${highlight(body.trim(), terms)}</p>` : ""}
       <div class="meta">
-        ${p ? `<span class="badge product">${esc(p.name)}</span>` : `<span class="badge">관련도 낮음${lowProduct ? " · " + esc(lowProduct.name) : ""}</span>`}
+        ${productBadge(p, lowProduct)}
         ${cats.map((c) => `<span class="badge">${esc(c)}</span>`).join("")}
         ${stats}
         ${author ? `<span>${author}</span>` : ""}
@@ -568,7 +574,7 @@ function renderExposure(groups) {
     <section class="kw-group" style="${p ? `--c:${esc(p.color)}` : ""}">
       <header class="kw-head">
         <h3><a href="https://search.naver.com/search.naver?query=${encodeURIComponent(g.keyword)}" target="_blank" rel="noopener" title="네이버에서 직접 검색해 보기">${esc(g.keyword)}</a></h3>
-        ${p ? `<span class="badge product">${esc(p.name)}</span>` : ""}
+        ${p && !state.product ? `<span class="badge product">${esc(p.name)}</span>` : ""}
         <span class="muted">확인 ${relTime(g.checked_at)}</span>
         <span class="srcs">${srcs}</span>
       </header>
