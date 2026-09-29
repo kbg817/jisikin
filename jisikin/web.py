@@ -396,7 +396,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             },
             social={
                 "platforms": social_status(),
-                "counts": state.store.social_counts(cfg.settings.social_max_age_days),
+                "counts": state.store.social_counts({pf: cfg.settings.social_age_days(pf) for pf in ("youtube", "threads")}),
                 "interval_hours": state.social_interval_hours(),
                 "next_at": iso(state.next_social_at),
                 "last_run": social_runs[0] if social_runs else None,
@@ -544,9 +544,10 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             category=a.get("category") or None,
             status=a.get("status", "todo"),
             include_low=a.get("include_low") == "1",
-            max_age_days=state.cfg.settings.social_max_age_days,
+            max_age_days=state.cfg.settings.social_age_days(platform),
             query=(a.get("q") or "").strip(),
-            sort=a.get("sort", "priority"),
+            # 유튜브는 조회수 많은 영상 = 사람들이 많이 보는 영상이 먼저
+            sort=a.get("sort") or ("views" if platform == "youtube" else "priority"),
         )
         items = []
         for r in rows:

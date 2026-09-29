@@ -4,13 +4,21 @@ const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = "jisikin.filters";
 
 const state = {
-  view: "feed", // feed: 새 질문 / exposure: 상위노출 글 / youtube · threads: 유튜브·쓰레드
+  view: "feed", // feed: 새 질문 / exposure: 상위노출 글 (둘 다 지식iN) / youtube · threads: 유튜브·쓰레드
+  kinView: "feed", // 지식iN 탭에서 마지막으로 본 화면
   product: "", category: "", status: "todo", sort: "priority",
   unanswered: false, low: false, q: "", expUnanswered: false,
-  sStatus: "todo", sSort: "priority", sLow: false, sQ: "",
+  sStatus: "todo", sSort: "priority", ytSort: "views", sLow: false, sQ: "",
 };
 const PLATFORM_NAMES = { youtube: "유튜브", threads: "쓰레드" };
+// 유튜브는 조회수 많은 순(= 사람들이 많이 보는 영상)이 기본
+const SORT_OPTIONS = {
+  youtube: [["views", "조회수 많은 순"], ["latest", "최신순"]],
+  threads: [["priority", "추천순"], ["latest", "최신순"]],
+};
 const isSocial = () => state.view === "youtube" || state.view === "threads";
+const groupOf = (view) => (view === "feed" || view === "exposure" ? "kin" : view);
+const sortKey = () => (state.view === "youtube" ? "ytSort" : "sSort");
 
 // 카드 종류별 API 주소 (지식iN 질문 / 유튜브·쓰레드 글)
 function itemPath(card, suffix) {
@@ -113,33 +121,61 @@ async function loadMeta() {
   if (wasRunning && !meta.running) loadList();
   wasRunning = meta.running;
   const newTotal = Object.values(meta.counts.products).reduce((a, p) => a + p.new, 0);
-  document.title = (newTotal ? `(${newTotal}) ` : "") + "지식iN 질문 수집기";
+  document.title = (newTotal ? `(${newTotal}) ` : "") + "답변·댓글 센터";
 }
 
 function renderViews() {
-  document.querySelectorAll(".view").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
+  const group = groupOf(state.view);
+  document.querySelectorAll(".view").forEach((b) => b.classList.toggle("active", b.dataset.group === group));
+  document.querySelectorAll(".subview").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
+  $("#subviews").hidden = group !== "kin";
   $("#feed-toolbar").hidden = state.view !== "feed";
   $("#exp-toolbar").hidden = state.view !== "exposure";
   $("#social-toolbar").hidden = !isSocial();
+  if (isSocial()) {
+    const sel = $("#s-sort");
+    const opts = SORT_OPTIONS[state.view];
+    if (!opts.some(([v]) => v === state[sortKey()])) state[sortKey()] = opts[0][0];
+    sel.innerHTML = opts.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
+    sel.value = state[sortKey()];
+  }
+  if (meta) renderGroupCounts();
+}
+
+// 상단 탭 옆 숫자: 처리할 글 수
+function renderGroupCounts() {
+  const sum = (counts) => Object.values(counts || {}).reduce((a, p) => a + p.total, 0);
+  const n = { kin: sum(meta.counts.products), youtube: sum(meta.social.counts.youtube), threads: sum(meta.social.counts.threads) };
+  for (const [k, v] of Object.entries(n)) {
+    const el = $(`#cnt-${k}`);
+    el.textContent = v ? num(v) : "";
+    el.title = v ? `처리할 글 ${num(v)}개` : "";
+  }
 }
 
 function renderStatus() {
+  // 상단: 오늘 실적 (지식iN 답변 + 유튜브·쓰레드 댓글)
+  const head = [];
+  if (meta.running) {
+    const label = { exposure: "상위노출 확인 중…", social: "유튜브·쓰레드 찾는 중…", keywords: "검색어 만드는 중…" }[meta.running_kind] || "지식iN 수집 중…";
+    head.push(`<b>${label}</b>`);
+  }
+  const today = meta.answer_stats.reduce((a, s) => a + s.today, 0);
+  const who = meta.auth ? meta.answer_stats.filter((s) => s.today).map((s) => `${esc(s.name)} ${s.today}`).join(", ") : "";
+  head.push(`오늘 답변·댓글 <b>${today}</b>건${who ? ` (${who})` : ""}`);
+  $("#run-status").innerHTML = head.join(" · ");
+
+  // 새 질문 도구줄: 지식iN 수집 상태
   const r = meta.last_run;
   const parts = [];
   parts.push(meta.mode === "api" ? "네이버 검색 API" : "웹 검색 모드");
-  if (meta.running) {
-    const label = { exposure: "상위노출 확인 중…", social: "유튜브·쓰레드 찾는 중…", keywords: "검색어 만드는 중…" }[meta.running_kind] || "수집 중…";
-    parts.push(`<b>${label}</b>`);
-  }
+  if (meta.running && meta.running_kind === "collect") parts.push("<b>수집 중…</b>");
   else if (r) {
     parts.push(`마지막 수집 ${relTime(r.finished_at || r.started_at)} · 새 관련 질문 ${r.new_relevant}건`);
   } else parts.push("아직 수집 기록이 없습니다");
   if (!meta.running && meta.next_run_at) parts.push(`다음 수집 ${untilTime(meta.next_run_at)}`);
   if (!meta.interval) parts.push("자동 수집 꺼짐");
-  const today = meta.answer_stats.reduce((a, s) => a + s.today, 0);
-  const who = meta.auth ? meta.answer_stats.filter((s) => s.today).map((s) => `${esc(s.name)} ${s.today}`).join(", ") : "";
-  parts.push(`오늘 답변 ${today}건${who ? ` (${who})` : ""}`);
-  $("#run-status").innerHTML = parts.join(" · ");
+  $("#feed-status").innerHTML = parts.join(" · ");
   const btn = $("#collect-btn");
   const collecting = meta.running && meta.running_kind === "collect";
   btn.disabled = collecting;
@@ -175,7 +211,6 @@ function renderSocialBar() {
   const busy = meta.running && meta.running_kind === "social";
   btn.disabled = busy || !(x.platforms.youtube || x.platforms.threads);
   btn.textContent = busy ? "찾는 중…" : "지금 찾기";
-  $("#s-sort").querySelector('[value="views"]').hidden = state.view === "threads";
   if (!on && isSocial()) btn.title = `${PLATFORM_NAMES[state.view]} 키가 없어 이 탭은 수집하지 않습니다`;
   else btn.removeAttribute("title");
 }
@@ -366,7 +401,7 @@ async function loadSocial() {
   const view = state.view;
   const params = new URLSearchParams({
     platform: view, product: state.product, category: state.category, status: state.sStatus,
-    sort: view === "threads" && state.sSort === "views" ? "priority" : state.sSort,
+    sort: state[sortKey()],
     include_low: state.sLow ? "1" : "", q: state.sQ,
   });
   const data = await api("/api/social?" + params);
@@ -406,7 +441,7 @@ function socialCardHtml(q) {
   }
   const cats = (q.categories || []).length ? q.categories : (bestMatch.categories || []);
   const stats = yt ? [
-    `<span class="badge" title="조회수">조회 ${compactNum(q.views)}</span>`,
+    `<span class="badge views" title="조회수 ${q.views == null ? "?" : num(q.views)}회">조회 ${compactNum(q.views)}</span>`,
     q.comments != null ? `<span class="badge ${q.comments < 5 ? "zero" : ""}" title="댓글 수">댓글 ${compactNum(q.comments)}</span>` : "",
     q.likes != null ? `<span title="좋아요">♥ ${compactNum(q.likes)}</span>` : "",
   ].join("") : "";
@@ -619,9 +654,12 @@ async function copyText(text) {
 }
 
 document.addEventListener("click", async (ev) => {
-  const view = ev.target.closest(".view");
+  const view = ev.target.closest(".view, .subview");
   if (view) {
-    state.view = view.dataset.view;
+    const next = view.dataset.view || (view.dataset.group === "kin" ? state.kinView : view.dataset.group);
+    if (next === state.view) return;
+    state.view = next;
+    if (groupOf(next) === "kin") state.kinView = next;
     saveFilters(); renderViews(); renderTabs(); renderChips(); renderNotice();
     $("#list").innerHTML = "";
     loadList();
@@ -726,10 +764,16 @@ function bindFilter(sel, key, isCheck) {
   bindFilter("#f-q", "q");
   bindFilter("#x-unanswered", "expUnanswered", true);
   bindFilter("#s-status", "sStatus");
-  bindFilter("#s-sort", "sSort");
+  $("#s-sort").addEventListener("input", (ev) => {
+    state[sortKey()] = ev.target.value;
+    saveFilters();
+    loadList();
+  });
   bindFilter("#s-low", "sLow", true);
   bindFilter("#s-q", "sQ");
   if (!["feed", "exposure", "youtube", "threads"].includes(state.view)) state.view = "feed";
+  if (!["feed", "exposure"].includes(state.kinView)) state.kinView = "feed";
+  renderViews();
   try {
     await loadMeta();
     if (state.product && !productById(state.product)) { state.product = ""; state.category = ""; renderTabs(); renderChips(); }

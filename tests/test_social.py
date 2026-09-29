@@ -86,7 +86,7 @@ def test_youtube_client_parses_search_and_stats(tmp_path):
     assert (p.views, p.likes, p.comments) == (15000, 300, 3)
     assert p.published_at.isoformat().startswith("2026-09-29T10:00:00")
     params = session.calls[0][1]
-    assert params["order"] == "date" and params["type"] == "video" and params["key"] == "KEY"
+    assert params["order"] == "relevance" and params["type"] == "video" and params["key"] == "KEY"
     assert YouTubeBudget(store, 9000).used() == 101
 
 
@@ -245,3 +245,35 @@ def test_social_collect_and_draft_need_keys(web):
     assert r.status_code == 400
     page = client.get("/settings").get_data(as_text=True)
     assert "YOUTUBE_API_KEY" in page and "THREADS_ACCESS_TOKEN" in page
+
+
+def test_youtube_lists_most_viewed_first_and_keeps_older_videos(web):
+    state, client = web
+    old = _post("yt:2", title="닥사렌 두 달 사용기", views=90000)
+    old.published_at = now_kst() - timedelta(days=60)  # 쓰레드 기준(14일)보다 오래됐지만 유튜브는 보여줌
+    state.store.upsert_social(old, "닥사렌")
+    state.store.upsert_social(_post("yt:3", title="닥사렌 언박싱", views=40), "닥사렌")
+    state.store.classify_social(social_matcher(state.cfg))
+    items = client.get("/api/social?platform=youtube").get_json()["items"]
+    assert [i["post_id"] for i in items][:2] == ["yt:2", "yt:3"]  # 조회수 많은 순이 기본
+    latest = client.get("/api/social?platform=youtube&sort=latest").get_json()["items"]
+    assert latest[-1]["post_id"] == "yt:2"
+    assert client.get("/api/meta").get_json()["social"]["counts"]["youtube"]["daksaren"]["total"] == 3
+
+
+def test_collect_social_uses_platform_age_and_youtube_order(tmp_path, example_cfg):
+    store = Store(tmp_path / "db.sqlite")
+    seen = {}
+
+    class Spy(FakeClient):
+        def search(self, query, since, limit):
+            seen[self.name] = since
+            return []
+
+    yt, th = Spy({}), Spy({})
+    yt.name, th.name = "youtube", "threads"
+    collect_social(example_cfg, store, clients={"youtube": yt, "threads": th}, log=lambda m: None)
+    s = example_cfg.settings
+    assert round((now_kst() - seen["youtube"]).days) in (s.youtube_max_age_days - 1, s.youtube_max_age_days)
+    assert round((now_kst() - seen["threads"]).days) in (s.social_max_age_days - 1, s.social_max_age_days)
+    assert YouTubeClient("K", order="viewCount").order == "viewCount"

@@ -28,7 +28,7 @@ def client(app_state):
 
 
 def test_pages_render(client):
-    assert "지식iN 질문 수집기" in client.get("/").get_data(as_text=True)
+    assert "답변·댓글 센터" in client.get("/").get_data(as_text=True)
     page = client.get("/settings").get_data(as_text=True)
     assert "config.yaml" in page and "신의소리" in page
 

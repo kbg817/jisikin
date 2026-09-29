@@ -1,6 +1,6 @@
 """유튜브 · 쓰레드에서 제품 관련 영상과 글을 찾는다.
 
-- 유튜브: YouTube Data API v3 (search.list 로 최신 영상 → videos.list 로 조회수·좋아요·댓글 수)
+- 유튜브: YouTube Data API v3 (search.list 로 유튜브 검색 결과 순 영상 → videos.list 로 조회수·좋아요·댓글 수)
 - 쓰레드: Threads API keyword_search (threads_keyword_search 권한이 있는 토큰 필요)
 
 찾은 글은 지식iN 질문과 같은 규칙(제품 키워드·카테고리 점수)으로 분류하고,
@@ -135,9 +135,13 @@ class YouTubeBudget:
 
 
 class YouTubeClient:
-    def __init__(self, api_key: str, budget: YouTubeBudget | None = None, session: requests.Session | None = None):
+    def __init__(
+        self, api_key: str, budget: YouTubeBudget | None = None, session: requests.Session | None = None,
+        order: str = "relevance",
+    ):
         self.api_key = api_key
         self.budget = budget
+        self.order = order
         self.session = session or requests.Session()
 
     def _get(self, url: str, params: dict, units: int) -> dict:
@@ -170,7 +174,7 @@ class YouTubeClient:
         data = self._get(
             YT_SEARCH_URL,
             {
-                "part": "snippet", "q": query, "type": "video", "order": "date",
+                "part": "snippet", "q": query, "type": "video", "order": self.order,
                 "maxResults": max(1, min(limit, 50)),
                 "publishedAfter": since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "regionCode": "KR", "relevanceLanguage": "ko",
@@ -297,7 +301,7 @@ def make_clients(cfg: AppConfig, store: Store) -> dict[str, object]:
     clients: dict[str, object] = {}
     key, token = youtube_key(), threads_token()
     if key:
-        clients["youtube"] = YouTubeClient(key, YouTubeBudget(store, cfg.settings.youtube_daily_units))
+        clients["youtube"] = YouTubeClient(key, YouTubeBudget(store, cfg.settings.youtube_daily_units), order=cfg.settings.youtube_order)
     if token:
         clients["threads"] = ThreadsClient(token)
     return clients
@@ -333,7 +337,6 @@ def collect_social(
     run_id = store.start_run("social")
     touched: list[str] = []
     new_ids: set[str] = set()
-    since = now_kst() - timedelta(days=s.social_max_age_days)
     try:
         queries = cfg.social_queries()
         summary.queries = len(queries)
@@ -343,6 +346,7 @@ def collect_social(
             maybe_refresh_threads_token(clients["threads"], store, save_threads_token, log)
         for platform, client in clients.items():
             limit = s.youtube_results if platform == "youtube" else s.threads_results
+            since = now_kst() - timedelta(days=s.social_age_days(platform))
             fails = 0
             for q in queries:
                 try:

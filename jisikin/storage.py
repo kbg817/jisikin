@@ -1046,17 +1046,19 @@ class Store:
             rows.sort(key=lambda r: r.get("status_changed_at") or "", reverse=True)
         return rows[:limit]
 
-    def social_counts(self, max_age_days: int | None = None, now: datetime | None = None) -> dict:
-        """{platform: {product: {total, new, categories}}} — 할 일(new/opened)만."""
+    def social_counts(self, max_age_days: int | dict[str, int] | None = None, now: datetime | None = None) -> dict:
+        """{platform: {product: {total, new, categories}}} — 할 일(new/opened)만.
+
+        max_age_days 는 모든 플랫폼 공통 일수 또는 {platform: 일수}."""
         now = now or now_kst()
-        sql = "SELECT platform, product, categories, status FROM social_posts WHERE product IS NOT NULL AND status IN ('new','opened')"
-        args: list = []
-        if max_age_days:
-            sql += " AND (published_at IS NULL OR published_at >= ?)"
-            args.append(iso(now - timedelta(days=max_age_days)))
+        sql = "SELECT platform, product, categories, status, published_at FROM social_posts WHERE product IS NOT NULL AND status IN ('new','opened')"
+        ages = max_age_days if isinstance(max_age_days, dict) else {}
         out: dict[str, dict] = {"youtube": {}, "threads": {}}
         with self._conn() as c:
-            for r in c.execute(sql, args):
+            for r in c.execute(sql):
+                days = ages.get(r["platform"]) if ages else max_age_days
+                if days and r["published_at"] and r["published_at"] < iso(now - timedelta(days=days)):
+                    continue
                 p = out.setdefault(r["platform"], {}).setdefault(r["product"], {"total": 0, "new": 0, "categories": {}})
                 p["total"] += 1
                 if r["status"] == "new":

@@ -164,15 +164,36 @@ textarea.config {
 .ok-dot::before { content: "●"; color: #16a34a; margin-right: 4px; }
 .no-dot::before { content: "●"; color: #9ca3af; margin-right: 4px; }
 
-/* 보기 전환: 새 질문 / 상위노출 글 */
-.views { display: flex; gap: 0; margin-bottom: 14px; border-bottom: 2px solid var(--line); }
+/* 보기 전환: 지식iN / 유튜브 / 쓰레드 */
+.views { display: flex; gap: 0; margin-bottom: 12px; border-bottom: 2px solid var(--line); }
 .view {
-  border: 0; background: none; cursor: pointer; padding: 8px 16px 10px; font-size: 16px; font-weight: 600;
+  border: 0; background: none; cursor: pointer; padding: 8px 18px 10px; font-size: 16px; font-weight: 600;
   color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -2px;
+  display: inline-flex; align-items: center; gap: 7px;
 }
-.view .muted { font-size: 12px; font-weight: 400; margin-left: 4px; }
-.view.active { color: var(--text); border-bottom-color: var(--accent); }
+.view.active { color: var(--text); border-bottom-color: var(--pc, var(--accent)); }
+.view[data-group="kin"] { --pc: #03c75a; }
+.view[data-group="youtube"] { --pc: #ff0033; }
+.view[data-group="threads"] { --pc: var(--text); }
+.pf {
+  width: 20px; height: 20px; border-radius: 5px; display: inline-grid; place-items: center;
+  font-size: 11px; font-weight: 800; color: #fff; background: var(--pc); opacity: .45;
+}
+.pf.th { color: var(--panel); }
+.view.active .pf { opacity: 1; }
+.view .cnt:not(:empty) { font-size: 12px; font-weight: 600; background: var(--chip); color: var(--muted); border-radius: 999px; padding: 0 7px; }
+.view.active .cnt:not(:empty) { background: var(--pc); color: #fff; }
+.view[data-group="threads"].active .cnt:not(:empty) { color: var(--panel); }
+/* 지식iN 안의 새 질문 / 상위노출 글 */
+.subviews { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 12px; background: var(--chip); border-radius: 10px; }
+.subview {
+  border: 0; background: none; cursor: pointer; padding: 5px 14px; border-radius: 8px; font-size: 14px; font-weight: 600; color: var(--muted);
+}
+.subview .muted { font-size: 12px; font-weight: 400; margin-left: 3px; }
+.subview.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.badge.views { font-weight: 700; }
 .exp-status { flex: 1; color: var(--muted); font-size: 13px; min-width: 200px; }
+#feed-status { flex-basis: 100%; }
 
 /* 상위노출 글 */
 .kw-group { margin-bottom: 22px; }
@@ -200,6 +221,7 @@ textarea.config {
 }
 
 /* 로그인 · 사용자 */
+header.top .menu { display: flex; gap: 6px; }
 header.top .btn.current { border-color: var(--text); font-weight: 600; }
 header.top form.me { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; }
 .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
@@ -258,12 +280,16 @@ details.panel summary { cursor: pointer; font-size: 14px; }
   header.top { padding: 10px 16px; gap: 8px; }
   header.top h1 { flex: 1; }
   .run-status { order: 3; flex-basis: 100%; min-width: 0; }
+  header.top .menu { order: 4; flex-basis: 100%; }
+  header.top .menu .btn { flex: 1; text-align: center; padding: 4px 6px; font-size: 13px; }
   .wrap { padding: 12px 16px 60px; }
   .card { flex-direction: column; gap: 10px; }
   .actions { flex-direction: row; flex-wrap: wrap; }
   .toolbar { gap: 8px 12px; }
-  .view { flex: 1; padding: 8px 6px 10px; }
-  .view .muted { display: none; }
+  .view { flex: 1; justify-content: center; padding: 8px 4px 10px; font-size: 15px; gap: 5px; }
+  .subviews { display: flex; }
+  .subview { flex: 1; }
+  .subview .muted { display: none; }
 }
 
 /* 유튜브 · 쓰레드 */
