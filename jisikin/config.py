@@ -121,6 +121,8 @@ class Settings:
     youtube_results: int = 25            # 검색어당 영상 수 (최대 50)
     youtube_daily_units: int = 9000      # 유튜브 API 하루 사용량 상한 (무료 10,000). 검색 1번 ≈ 101
     threads_results: int = 50            # 검색어당 쓰레드 글 수 (최대 100)
+    # 작업 결과
+    track_check_hour: int = 6            # 매일 이 시각(한국 시간)에 내 답변·댓글이 보이는지 확인. -1 이면 끔
 
     def social_age_days(self, platform: str) -> int:
         return self.youtube_max_age_days if platform == "youtube" else self.social_max_age_days
@@ -246,6 +248,8 @@ def parse_config(text: str) -> AppConfig:
     settings.youtube_results = max(1, min(settings.youtube_results, 50))
     settings.youtube_daily_units = max(0, settings.youtube_daily_units)
     settings.threads_results = max(1, min(settings.threads_results, 100))
+    if not -1 <= settings.track_check_hour <= 23:
+        raise ConfigError("settings.track_check_hour 는 0~23 (끄려면 -1) 이어야 합니다.")
     raw_sources = (data.get("settings") or {}).get("exposure_sources")
     if raw_sources is not None:
         sources = _str_list(raw_sources, "settings.exposure_sources")

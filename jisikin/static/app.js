@@ -9,7 +9,9 @@ const state = {
   product: "", category: "", status: "todo", sort: "priority",
   unanswered: false, low: false, q: "", expUnanswered: false,
   sStatus: "todo", sSort: "priority", ytSort: "views", ytKind: "", sLow: false, sQ: "",
+  rPlatform: "", rState: "", rBy: "",
 };
+let resultItems = null;
 const PLATFORM_NAMES = { youtube: "유튜브", threads: "쓰레드" };
 // 유튜브는 조회수 많은 순(= 사람들이 많이 보는 영상)이 기본
 const SORT_OPTIONS = {
@@ -118,6 +120,7 @@ async function loadMeta() {
   renderNotice();
   renderExposureBar();
   renderSocialBar();
+  renderResultsBar();
   if (wasRunning && !meta.running) loadList();
   wasRunning = meta.running;
   const newTotal = Object.values(meta.counts.products).reduce((a, p) => a + p.new, 0);
@@ -132,6 +135,7 @@ function renderViews() {
   $("#feed-toolbar").hidden = state.view !== "feed";
   $("#exp-toolbar").hidden = state.view !== "exposure";
   $("#social-toolbar").hidden = !isSocial();
+  $("#results-toolbar").hidden = state.view !== "results";
   $("#s-kind").hidden = state.view !== "youtube";
   if (isSocial()) {
     const sel = $("#s-sort");
@@ -152,6 +156,9 @@ function renderGroupCounts() {
     el.textContent = v ? num(v) : "";
     el.title = v ? `처리할 글 ${num(v)}개` : "";
   }
+  const bad = (resultItems || []).filter((i) => resultBucket(i) === "problem").length;
+  $("#cnt-results").textContent = bad ? `⚠️ ${bad}` : "";
+  $("#cnt-results").title = bad ? `안 보이는 답변·댓글 ${bad}개` : "";
 }
 
 function renderStatus() {
@@ -216,6 +223,33 @@ function renderSocialBar() {
   else btn.removeAttribute("title");
 }
 
+function renderResultsBar() {
+  const x = meta.track;
+  const parts = [];
+  const busy = meta.running && meta.running_kind === "track";
+  if (busy) parts.push("<b>확인 중…</b> (글이 많으면 몇 분 걸립니다)");
+  if (x.hour < 0) parts.push("자동 확인 꺼짐");
+  else parts.push(`매일 오전 ${x.hour}시 자동 확인`);
+  if (!busy && x.last_run) parts.push(`마지막 확인 ${relTime(x.last_run.finished_at || x.last_run.started_at)}`);
+  if (!busy && x.next_at) parts.push(`다음 ${untilTime(x.next_at)}`);
+  if (resultItems) {
+    const n = { visible: 0, problem: 0, unknown: 0 };
+    resultItems.forEach((i) => n[resultBucket(i)]++);
+    parts.push(`<b class="ok-txt">✅ ${n.visible}</b> · <b class="bad-txt">⚠️ ${n.problem}</b> · 확인 전 ${n.unknown}`);
+  }
+  $("#results-status").innerHTML = parts.join(" · ");
+  const btn = $("#results-check-btn");
+  btn.disabled = busy || x.hour < 0;
+  btn.textContent = busy ? "확인 중…" : "지금 확인";
+  // 직원별 보기 (로그인 사용 시)
+  const sel = $("#r-by");
+  sel.hidden = !meta.auth;
+  if (meta.auth && !sel.options.length) {
+    sel.innerHTML = `<option value="">모든 직원</option>` + Object.entries(meta.people || {}).map(([u, n]) => `<option value="${esc(u)}">${esc(n)}</option>`).join("");
+    sel.value = state.rBy;
+  }
+}
+
 function exposureCounts() {
   // 제품별: 상위노출 글 중 아직 처리 안 한 글 수
   const counts = {};
@@ -230,8 +264,18 @@ function exposureCounts() {
   return counts;
 }
 
+function resultCounts() {
+  const counts = {};
+  for (const i of filteredResults(false)) {
+    const c = counts[i.product] || (counts[i.product] = { total: 0, new: 0 });
+    c.total += 1;
+    if (resultBucket(i) === "problem") c.new += 1; // 빨간 숫자 = 안 보이는 글
+  }
+  return counts;
+}
+
 function renderTabs() {
-  const counts = state.view === "exposure" ? exposureCounts() : isSocial() ? (meta.social.counts[state.view] || {}) : meta.counts.products;
+  const counts = state.view === "results" ? resultCounts() : state.view === "exposure" ? exposureCounts() : isSocial() ? (meta.social.counts[state.view] || {}) : meta.counts.products;
   const all = Object.values(counts).reduce((a, p) => ({ total: a.total + p.total, new: a.new + p.new }), { total: 0, new: 0 });
   const tabs = [{ id: "", name: "전체", color: "", c: all }]
     .concat(meta.products.map((p) => ({ ...p, c: counts[p.id] || { total: 0, new: 0 } })));
@@ -244,7 +288,7 @@ function renderTabs() {
 
 function renderChips() {
   const p = productById(state.product);
-  if (!p || state.view === "exposure") { $("#chips").innerHTML = ""; return; }
+  if (!p || state.view === "exposure" || state.view === "results") { $("#chips").innerHTML = ""; return; }
   const counts = isSocial() ? (meta.social.counts[state.view] || {}) : meta.counts.products;
   const cc = counts[p.id]?.categories || {};
   const chips = [{ name: "", label: "모든 카테고리" }].concat(p.categories.map((c) => ({ name: c, label: c })));
@@ -256,6 +300,7 @@ function renderChips() {
 
 function renderNotice() {
   if (isSocial()) return renderSocialNotice();
+  if (state.view === "results") return renderResultsNotice();
   const r = state.view === "exposure" ? meta.exposure.last_run : meta.last_run;
   const what = state.view === "exposure" ? "상위노출 확인" : "수집";
   const notes = [];
@@ -289,8 +334,114 @@ function renderSocialNotice() {
   $("#notice").innerHTML = notes.map((n) => `<div class="notice">${n}</div>`).join("");
 }
 
+function renderResultsNotice() {
+  const notes = [];
+  const r = meta.track.last_run;
+  if (r && r.errors && r.errors.length) {
+    notes.push(`<b>마지막 확인에서 오류 ${r.errors.length}건</b> (다음 확인 때 다시 시도합니다)<ul>${r.errors.slice(0, 5).map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`);
+  }
+  if (!meta.track.youtube) notes.push("유튜브 API 키가 없어 유튜브 댓글은 확인하지 않습니다.");
+  $("#notice").innerHTML = notes.map((n) => `<div class="notice">${n}</div>`).join("");
+}
+
+// ---------------------------------------------------------------- 작업 결과
+function resultBucket(i) {
+  const st = i.check?.state;
+  if (st === "visible") return "visible";
+  if (st === "missing" || st === "gone" || st === "comments_off") return "problem";
+  return "unknown";
+}
+
+function filteredResults(byProduct = true) {
+  return (resultItems || []).filter((i) =>
+    (!byProduct || !state.product || i.product === state.product)
+    && (!state.rPlatform || i.platform === state.rPlatform)
+    && (!state.rState || resultBucket(i) === state.rState)
+    && (!state.rBy || i.status_by === state.rBy));
+}
+
+async function loadResults() {
+  const data = await api("/api/results");
+  if (state.view !== "results") return;
+  resultItems = data.items;
+  renderTabs();
+  renderGroupCounts();
+  renderResultsBar();
+  const items = filteredResults();
+  const list = $("#list");
+  if (!items.length) {
+    list.innerHTML = resultItems.length
+      ? `<div class="empty">조건에 맞는 글이 없습니다.</div>`
+      : `<div class="empty">아직 완료한 답변·댓글이 없습니다.<br><span class="muted">[✓ 답변완료] / [✓ 댓글완료]를 누른 글이 여기에 모이고, 매일 아침 아직 보이는지 확인합니다.</span></div>`;
+    return;
+  }
+  list.innerHTML = items.map(resultCardHtml).join("");
+}
+
+function resultStateHtml(i) {
+  const c = i.check;
+  const out = [];
+  if (!c) {
+    if (i.platform === "threads") out.push(`<span class="rs-badge none" title="Meta 앱 검수 전에는 남의 글에 단 답글을 확인할 수 없습니다">쓰레드는 자동 확인 안 함</span>`);
+    else out.push(`<span class="rs-badge none">확인 전</span><span>다음 확인 ${untilTime(meta.track.next_at) || "-"}</span>`);
+    return out.join("");
+  }
+  const labels = {
+    visible: ["ok", "✅ 노출 중"], missing: ["bad", "⚠️ 안 보임"], gone: ["bad", "🗑 원글 삭제됨"],
+    comments_off: ["bad", "🚫 댓글 막힘"], no_text: ["none", "✏️ 확인 불가"],
+  };
+  const [cls, label] = labels[c.state] || ["none", c.state];
+  const hints = {
+    missing: i.platform === "kin" ? "질문 페이지에 내 답변이 없습니다 (삭제·신고로 숨김 의심)" : "공개 댓글에 없습니다 (삭제·스팸 필터로 숨김 의심)",
+    no_text: "올린 답변·댓글 내용이 저장되지 않아 비교할 수 없습니다. 아래에 실제로 올린 내용을 붙여넣어 주세요.",
+  };
+  out.push(`<span class="rs-badge ${cls}" title="${esc(hints[c.state] || "")}">${label}</span>`);
+  if (c.state === "visible") {
+    if (c.adopted) out.push(`<span class="badge hot">채택됨</span>`);
+    if (c.rank) out.push(`<span class="badge ${c.rank <= 3 ? "hot" : ""}" title="인기 댓글순 순위">인기 댓글 ${c.rank}위</span>`);
+    if (c.likes != null) out.push(`<span title="내 댓글 좋아요">♥ ${compactNum(c.likes)}</span>`);
+    if (c.replies) out.push(`<span title="내 댓글에 달린 답글">답글 ${c.replies}</span>`);
+    if (c.note) out.push(`<span>${esc(c.note)}</span>`);
+    if (c.visible_days > 1) out.push(`<span title="보이는 걸 확인한 날 수">${c.visible_days}일째 노출</span>`);
+  }
+  if (c.state !== "visible" && c.prev_state === "visible") out.push(`<b class="bad-txt">지난 확인까지는 보였음</b>`);
+  out.push(`<span>확인 ${relTime(c.checked_at)}</span>`);
+  return out.join("");
+}
+
+function resultCardHtml(i) {
+  const p = productById(i.product);
+  const yt = i.platform === "youtube";
+  const pf = { kin: ["kin", "N"], youtube: ["yt", "▶"], threads: ["th", "@"] }[i.platform];
+  const by = meta.auth && i.status_by ? ` · ${esc(personName(i.status_by))}` : "";
+  const exp = i.exposure ? `<span class="badge hot" title="[상위노출 글] 검색어 중 가장 높은 순위">검색 '${esc(i.exposure.keyword)}' ${i.exposure.rank}위</span>` : "";
+  const noText = i.check?.state === "no_text" || (!i.check && !(i.draft || "").trim() && i.platform !== "threads");
+  return `
+  <article class="card result ${resultBucket(i)}" data-kind="${i.platform === "kin" ? "question" : "social"}" data-id="${esc(i.item_id)}" style="${p ? `--c:${esc(p.color)}` : ""}">
+    ${yt && i.thumbnail ? `<a class="thumb" href="${esc(i.url)}" target="_blank" rel="noopener"><img src="${esc(i.thumbnail)}" alt="" loading="lazy"></a>` : ""}
+    <div class="card-main">
+      <a class="title" href="${esc(i.url)}" target="_blank" rel="noopener"><span class="pf ${pf[0]} mini">${pf[1]}</span>${i.is_short ? '<span class="shorts-badge">숏츠</span>' : ""}${esc(i.title || "(제목 없음)")}</a>
+      <div class="meta result-state">${resultStateHtml(i)}${exp}</div>
+      <div class="meta">
+        ${productBadge(p, null)}
+        <span>완료 ${relTime(i.status_changed_at)}${by}</span>
+        ${yt && i.views != null ? `<span>조회 ${compactNum(i.views)}</span>` : ""}
+        ${(i.draft || "").trim() ? `<button class="linkish" data-act="toggle-text">올린 내용 보기</button>` : ""}
+      </div>
+      <div class="draft" ${noText ? "" : "hidden"}>
+        <textarea spellcheck="false" placeholder="실제로 올린 답변·댓글 내용을 붙여넣으세요">${esc(i.draft || "")}</textarea>
+        <div class="row">
+          <button class="btn small primary" data-act="save-text">저장</button>
+          <span class="hint">이 내용으로 내 답변·댓글을 찾습니다. 올린 뒤 고쳤다면 고친 내용으로 바꿔 주세요.</span>
+        </div>
+      </div>
+    </div>
+  </article>`;
+}
+
 // ---------------------------------------------------------------- 질문 목록
 async function loadList() {
+  if (state.view === "results") return loadResults();
   if (state.view === "exposure") return loadExposure();
   if (isSocial()) return loadSocial();
   const params = new URLSearchParams({
@@ -695,6 +846,19 @@ document.addEventListener("click", async (ev) => {
   }
   const card = ev.target.closest(".card");
   if (!card) return;
+  if (card.classList.contains("result")) {
+    const act = ev.target.closest("[data-act]")?.dataset.act;
+    if (act === "toggle-text") card.querySelector(".draft").hidden = !card.querySelector(".draft").hidden;
+    if (act === "save-text") {
+      const text = card.querySelector(".draft textarea").value;
+      if (!text.trim()) return toast("내용을 붙여넣어 주세요");
+      try {
+        await api(itemPath(card, "/draft/save"), { draft: text });
+        toast("저장했습니다. 다음 확인 때 이 내용으로 찾습니다");
+      } catch (e) { toast(e.message); }
+    }
+    return;
+  }
   if (ev.target.closest("[data-open]")) {
     const todo = state.view === "exposure" ? !card.classList.contains("done") : (isSocial() ? state.sStatus : state.status) === "todo";
     if (!card.classList.contains("opened") && todo) {
@@ -747,6 +911,17 @@ $("#social-collect-btn").addEventListener("click", async () => {
   }
 });
 
+$("#results-check-btn").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/results/check", {});
+    toast(r.started ? (meta.running ? "지금 작업이 끝나면 이어서 확인합니다" : "확인을 시작했습니다") : "이미 확인 중입니다");
+    wasRunning = true;
+    setTimeout(loadMeta, 800);
+  } catch (e) {
+    toast(e.message);
+  }
+});
+
 $("#exp-check-btn").addEventListener("click", async () => {
   try {
     const r = await api("/api/exposure/check", {});
@@ -785,9 +960,12 @@ function bindFilter(sel, key, isCheck) {
     loadList();
   });
   bindFilter("#s-kind", "ytKind");
+  bindFilter("#r-platform", "rPlatform");
+  bindFilter("#r-state", "rState");
+  bindFilter("#r-by", "rBy");
   bindFilter("#s-low", "sLow", true);
   bindFilter("#s-q", "sQ");
-  if (!["feed", "exposure", "youtube", "threads"].includes(state.view)) state.view = "feed";
+  if (!["feed", "exposure", "youtube", "threads", "results"].includes(state.view)) state.view = "feed";
   if (!["feed", "exposure"].includes(state.kinView)) state.kinView = "feed";
   renderViews();
   try {

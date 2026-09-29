@@ -174,6 +174,20 @@ CREATE TABLE IF NOT EXISTS social_posts (
     draft_edited      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_social_list ON social_posts(platform, product, status);
+
+-- 작업 결과: 답변완료·댓글완료 한 글에 내 답변/댓글이 아직 보이는지 매일 확인한 기록
+CREATE TABLE IF NOT EXISTS answer_checks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id     TEXT NOT NULL,                 -- 지식iN docId / yt:<영상 id>
+    checked_at  TEXT NOT NULL,
+    state       TEXT NOT NULL,                 -- visible / missing / gone / comments_off / no_text / error
+    rank        INTEGER,                       -- (유튜브) 인기 댓글 중 순위
+    likes       INTEGER,                       -- (유튜브) 내 댓글 좋아요
+    replies     INTEGER,                       -- (유튜브) 내 댓글에 달린 답글
+    adopted     INTEGER,                       -- (지식iN) 채택되면 1
+    note        TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_answer_checks ON answer_checks(item_id, id);
 """
 
 
@@ -1079,6 +1093,57 @@ class Store:
                 for cat in json.loads(r["categories"] or "[]"):
                     p["categories"][cat] = p["categories"].get(cat, 0) + 1
         return out
+
+    # ------------------------------------------------------------ 작업 결과 (노출 확인)
+
+    def answered_items(self) -> list[dict]:
+        """답변완료(지식iN) · 댓글완료(유튜브·쓰레드) 한 글 전체. 최근 완료 순."""
+        with self._conn() as c:
+            rows = [dict(r, platform="kin", item_id=r["doc_id"]) for r in c.execute(
+                """SELECT doc_id, url, title, product, draft, status_by, status_changed_at, answer_count, views
+                   FROM questions WHERE status='answered'"""
+            )]
+            rows += [dict(r, item_id=r["post_id"]) for r in c.execute(
+                """SELECT post_id, platform, url, title, body, product, draft, status_by, status_changed_at,
+                          views, comments, is_short, thumbnail
+                   FROM social_posts WHERE status='answered'"""
+            )]
+        rows.sort(key=lambda r: r.get("status_changed_at") or "", reverse=True)
+        return rows
+
+    def add_answer_check(
+        self, item_id: str, state: str, rank: int | None = None, likes: int | None = None, replies: int | None = None,
+        adopted: bool | None = None, note: str = "", now: datetime | None = None,
+    ) -> None:
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO answer_checks (item_id, checked_at, state, rank, likes, replies, adopted, note)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (item_id, iso(now or now_kst()), state, rank, likes, replies, _bool_int(adopted), note[:300]),
+            )
+
+    def latest_answer_checks(self) -> dict[str, dict]:
+        """{item_id: 마지막 확인 결과 + prev_state(그 전 결과) + visible_days(노출 확인된 날 수)}"""
+        out: dict[str, dict] = {}
+        with self._conn() as c:
+            for r in c.execute("SELECT * FROM answer_checks ORDER BY item_id, id"):
+                d = dict(r)
+                cur = out.get(d["item_id"])
+                d["prev_state"] = cur["state"] if cur else None
+                d["first_checked_at"] = cur["first_checked_at"] if cur else d["checked_at"]
+                d["visible_days"] = (cur["visible_days"] if cur else 0) + (d["state"] == "visible")
+                out[d["item_id"]] = d
+        return out
+
+    def purge_answer_checks(self, keep_days: int = 90, now: datetime | None = None) -> int:
+        """오래된 확인 기록 정리 (글마다 마지막 결과는 남김)."""
+        old = iso((now or now_kst()) - timedelta(days=keep_days))
+        with self._conn() as c:
+            return c.execute(
+                """DELETE FROM answer_checks WHERE checked_at < ?
+                   AND id NOT IN (SELECT MAX(id) FROM answer_checks GROUP BY item_id)""",
+                (old,),
+            ).rowcount
 
     def purge_social(self, keep_days: int, now: datetime | None = None) -> int:
         """오래된 미처리/무관 글 정리. 댓글완료는 보관."""
