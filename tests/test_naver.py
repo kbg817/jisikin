@@ -266,3 +266,45 @@ def test_scripts_are_ignored():
     d = parse_detail(html, NOW)
     assert d.title == "제목"
     assert d.answer_count is None
+
+
+def test_detail_date_from_script_data():
+    html = """<html><head><title>사주 좀 풀어주세요 : 지식iN</title>
+    <script>window.__DATA__ = {"question":{"title":"사주 좀 풀어주세요","regDate":"2026-09-28 21:14:05","viewCount":321}};</script>
+    </head><body><div class="c-heading"><div class="c-heading__title">사주 좀 풀어주세요</div>
+    <div class="c-heading__content">생년월일 알려드려요</div></div></body></html>"""
+    d = parse_detail(html, NOW)
+    assert d.asked_at == datetime(2026, 9, 28, 21, 14, 5, tzinfo=KST)
+
+
+def test_detail_date_inside_heading_without_label():
+    html = """<div class="c-heading"><div class="c-heading__title">제목</div><div class="c-heading__content">본문</div>
+    <div class="c-userinfo"><span class="nick">익명</span><span class="c-userinfo__time">2026.09.27.</span></div></div>"""
+    assert parse_detail(html, NOW).asked_at == datetime(2026, 9, 27, tzinfo=KST)
+
+
+def test_detail_date_near_label_outside_heading():
+    html = """<div class="c-heading"><div class="c-heading__title">제목</div></div>
+    <div class="etc"><em>등록</em> <span>3시간 전</span></div>"""
+    assert parse_detail(html, NOW).asked_at == datetime(2026, 9, 29, 12, 0, tzinfo=KST)
+
+
+def test_extract_kin_links_from_script_json():
+    from jisikin.naver import extract_kin_links_raw
+
+    html = r"""<script>var data = {"items":[
+      {"url":"https:\/\/kin.naver.com\/qna\/detail.naver?d1id=7&dirId=70112&docId=490000001"},
+      {"url":"https://m.kin.naver.com/mobile/qna/detail.naver?d1id=7&amp;dirId=70112&amp;docId=490000002"},
+      {"url":"https:\/\/kin.naver.com\/qna\/detail.naver?d1id=7&dirId=70112&docId=490000001#answer"}]}</script>"""
+    items = extract_kin_links_raw(html)
+    assert [q.doc_id for q in items] == ["490000001", "490000002"]
+    assert items[0].url == "https://kin.naver.com/qna/detail.naver?d1id=7&dirId=70112&docId=490000001"
+    assert items[0].title == "(제목 확인 중)"
+
+
+def test_search_integrated_falls_back_to_raw_links():
+    html = r'<html><body><div id="app"></div><script>__STATE__={"kin":["https:\/\/kin.naver.com\/qna\/detail.naver?dirId=1&docId=777"]}</script></body></html>'
+    client = NaverClient(session=FakeSession(FakeResponse(text=html)), delay_seconds=0)
+    items = client.search_integrated("인천 건선", "pc")
+    assert [q.doc_id for q in items] == ["777"]
+    assert client.last_status == 200 and "__STATE__" in client.last_html

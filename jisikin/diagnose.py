@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import sys
 
 from . import __version__
@@ -10,7 +11,7 @@ from .collector import effective_interval, estimate_api_calls_per_day, resolve_m
 from .config import AppConfig
 from .drafter import ai_status
 from .exposure import all_targets
-from .naver import NaverClient, NaverError
+from .naver import NaverClient, NaverError, debug_snippets
 from .searchad import SearchAdClient
 from .storage import Store
 
@@ -67,30 +68,49 @@ def run_diagnostics(
             good = bool(d.title and d.body and d.answer_count is not None and d.asked_at)
             if not good:
                 ok = False
+            views = f"{d.views:,}" if d.views is not None else "모름"
             lines.append(
                 f"[{'OK' if good else '??'}] 상세 페이지: 제목={'O' if d.title else 'X'} "
-                f"본문={'O' if d.body else 'X'} 답변수={answers} 작성일={asked} 내공={d.reward or '-'}"
+                f"본문={'O' if d.body else 'X'} 답변수={answers} 작성일={asked} 조회수={views} 내공={d.reward or '-'}"
             )
+            if not good or d.views is None:
+                lines += _page_debug(client, "상세", {
+                    "날짜": r"20\d{2}\s?[.\-/]\s?\d{1,2}\s?[.\-/]\s?\d{1,2}|\d+\s*(?:분|시간|일)\s*전|작성일|등록일",
+                    "조회": r"조회",
+                    "답변수": r"answer_?[Cc]ount|답변\s*\d",
+                })
         except NaverError as e:
             ok = False
             lines.append(f"[오류] 상세 페이지: {e}")
 
+    # 상위노출: 제품이 다른 검색어 2개까지 확인 (한 검색어는 원래 지식iN 이 안 뜰 수도 있으므로)
     targets = all_targets(cfg, store)
-    if targets:
-        product, keyword = targets[0]
+    samples: list[str] = []
+    seen_products: set[str] = set()
+    for product, keyword in targets:
+        if product.id not in seen_products and len(samples) < 2:
+            seen_products.add(product.id)
+            samples.append(keyword)
+    exposure_zero = True
+    for i, keyword in enumerate(samples):
         for source, label in (("pc", "통합검색 PC"), ("mobile", "통합검색 모바일")):
             if source not in cfg.settings.exposure_sources:
                 continue
             try:
                 found = client.search_integrated(keyword, source)
                 lines.append(f"[{'OK' if found else '??'}] 상위노출 '{keyword}' {label}: 지식iN 글 {len(found)}개")
-                for it in found[:3]:
-                    lines.append(f"     {found.index(it) + 1}. {it.title}  ({it.url})")
-                if not found:
-                    lines.append("     0개입니다. 이 검색어에 지식iN 글이 안 뜨거나, 네이버 화면 구조가 바뀌었을 수 있습니다.")
+                for n, it in enumerate(found[:3], start=1):
+                    lines.append(f"     {n}. {it.title}  ({it.url})")
+                if found:
+                    exposure_zero = False
+                elif i == 0:  # 첫 검색어에서만 화면 일부를 보여줌 (결과가 너무 길어지지 않게)
+                    lines += _page_debug(client, label, {"지식iN 링크": r"kin\.naver\.com", "지식iN 글자": r"지식iN"})
             except NaverError as e:
                 ok = False
                 lines.append(f"[오류] 상위노출 '{keyword}' {label}: {e}")
+    if samples and exposure_zero:
+        ok = False
+        lines.append("     통합검색에서 지식iN 글을 하나도 못 찾았습니다. 위 '진단' 줄을 Claude 에게 보내주세요.")
 
     # 검색어 자동 생성에 쓰는 자동완성 / 검색광고 API
     sample = (cfg.products[0].keywords or [cfg.products[0].name])[0]
@@ -118,6 +138,30 @@ def run_diagnostics(
     ai_ok, reason = ai_status()
     lines.append(f"[{'OK' if ai_ok else '--'}] AI (답변 초안 · 검색어 추천): {reason}")
     return ok, lines
+
+
+_BLOCK_WORDS = ("captcha", "자동입력 방지", "비정상적인", "보안 절차", "접근이 제한", "robot")
+
+
+def _page_debug(client, label: str, patterns: dict[str, str]) -> list[str]:
+    """실제로 받은 화면의 크기·제목·차단 여부와 주요 글자 주변을 짧게 보여준다 (Claude 가 구조를 파악하도록)."""
+    html = getattr(client, "last_html", "") or ""
+    if not html:
+        return []
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    title = re.sub(r"\s+", " ", m.group(1)).strip()[:40] if m else "-"
+    blocked = [w for w in _BLOCK_WORDS if w.lower() in html.lower()]
+    blocked_text = "/".join(blocked) if blocked else "없음"
+    out = [
+        f"     진단({label}): HTTP {getattr(client, 'last_status', '?')}, {len(html) // 1024}KB, "
+        f"제목={title}, 차단/캡차 문구={blocked_text}"
+    ]
+    for name, pat in patterns.items():
+        count = len(re.findall(pat, html))
+        out.append(f"       '{name}' {count}회")
+        for s in debug_snippets(html, pat, limit=2, width=80):
+            out.append(f"         … {s[:200]}")
+    return out
 
 
 def main_check() -> int:

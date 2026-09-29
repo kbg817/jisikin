@@ -281,7 +281,7 @@ def parse_detail(html: str, now: datetime | None = None) -> QuestionDetail:
 
     area_text = _text(heading)
     page_text = _text(soup)
-    d.asked_at = _parse_asked_at(soup, area_text or page_text, now)
+    d.asked_at = _parse_asked_at(soup, area_text or page_text, now) or _parse_asked_at_fallback(html, area_text, page_text, now)
 
     m = re.search(r"내공\s*(\d+)", area_text) if area_text else None
     if m:
@@ -356,12 +356,80 @@ def _parse_asked_at(soup: BeautifulSoup, text: str, now: datetime | None) -> dat
             return dt
     published = _meta(soup, "article:published_time")
     if published:
-        try:
-            dt = datetime.fromisoformat(published.replace("Z", "+00:00"))
-            return dt if dt.tzinfo else dt.replace(tzinfo=KST)
-        except ValueError:
-            pass
+        return _parse_iso_or_korean(published, now)
     return None
+
+
+_JSON_DATE_KEYS = re.compile(
+    r'["\']?(?:regDate|registDate|registerDate|writeDate|createDate|createdAt|createdDate|regDt|docRegDate|questionDate)["\']?'
+    r'\s*[:=]\s*["\']([^"\']{8,32})["\']',
+    re.I,
+)
+
+
+def _parse_iso_or_korean(value: str, now: datetime | None) -> datetime | None:
+    value = (value or "").strip()
+    if re.fullmatch(r"\d{12,13}", value):  # 밀리초 타임스탬프
+        return datetime.fromtimestamp(int(value) / 1000, KST)
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00").replace(" ", "T", 1))
+        return dt if dt.tzinfo else dt.replace(tzinfo=KST)
+    except ValueError:
+        return parse_korean_datetime(value, now)
+
+
+def _parse_asked_at_fallback(raw_html: str, area_text: str, page_text: str, now: datetime | None) -> datetime | None:
+    """화면 구조가 예상과 다를 때: 질문 머리글 안의 날짜 → 스크립트 데이터 → '작성/등록' 근처 날짜."""
+    if area_text:
+        m = _DATE_IN_TEXT.search(area_text)
+        if m:
+            dt = parse_korean_datetime(m.group(0), now)
+            if dt:
+                return dt
+    for m in _JSON_DATE_KEYS.finditer(raw_html or ""):
+        dt = _parse_iso_or_korean(m.group(1), now)
+        if dt:
+            return dt
+    m = re.search(r"(?:작성|등록)\S{0,3}\s*[:：]?\s*(" + _DATE_IN_TEXT.pattern + ")", page_text or "")
+    if m:
+        return parse_korean_datetime(m.group(1), now)
+    return None
+
+
+_KIN_URL_RAW = re.compile(
+    r"(?:https?:)?(?:\\?/\\?/)(?:m\.)?kin\.naver\.com(?:\\?/)(?:mobile(?:\\?/))?qna(?:\\?/)detail\.naver\?[^\"'<>\s]{0,300}?docId(?:=|\\u003[dD])\d+"
+)
+
+
+def extract_kin_links_raw(html: str) -> list[RawQuestion]:
+    """링크(<a>)로 못 찾을 때: 페이지 원문(스크립트 데이터 포함)에서 지식iN 질문 주소를 나온 순서대로 뽑는다.
+
+    제목은 모르므로 비워 두고, 상세 페이지를 읽을 때 채운다.
+    """
+    out: list[RawQuestion] = []
+    seen: set[str] = set()
+    for m in _KIN_URL_RAW.finditer(html or ""):
+        url = m.group(0)
+        url = url.replace("\\/", "/").replace("\\u0026", "&").replace("\\u003d", "=").replace("\\u003D", "=").replace("&amp;", "&")
+        if url.startswith("//"):
+            url = "https:" + url
+        parsed = parse_kin_url(url)
+        if parsed and parsed[0] not in seen:
+            seen.add(parsed[0])
+            out.append(RawQuestion(doc_id=parsed[0], url=parsed[1], title="(제목 확인 중)"))
+    return out
+
+
+def debug_snippets(html: str, pattern: str, limit: int = 3, width: int = 70) -> list[str]:
+    """[연결 점검]용: 원문에서 pattern 주변 글자를 짧게 보여준다 (화면 구조 파악용)."""
+    out = []
+    for m in re.finditer(pattern, html or ""):
+        a, b = max(0, m.start() - width), min(len(html), m.end() + width)
+        s = re.sub(r"\s+", " ", html[a:b]).strip()
+        out.append(s)
+        if len(out) >= limit:
+            break
+    return out
 
 
 # ---------------------------------------------------------------- 클라이언트
@@ -387,6 +455,8 @@ class NaverClient:
         )
         self._last_web_request = 0.0
         self._lock = threading.Lock()
+        self.last_status: int | None = None
+        self.last_html = ""
 
     # --- 공식 검색 API
     @property
@@ -463,19 +533,22 @@ class NaverClient:
     def search_integrated(self, query: str, platform: str = "pc") -> list[RawQuestion]:
         """네이버 통합검색 결과에 노출된 지식iN 글을 화면에 나온 순서대로 돌려준다."""
         if platform == "mobile":
+            base = INTEGRATED_MOBILE_URL
             html = self._get_html(
-                INTEGRATED_MOBILE_URL,
+                base,
                 params={"where": "m", "sm": "mtp_hty", "query": query},
                 headers={"User-Agent": MOBILE_USER_AGENT},
                 site="네이버 모바일 검색",
             )
-            return extract_questions(html, INTEGRATED_MOBILE_URL)
-        html = self._get_html(
-            INTEGRATED_PC_URL,
-            params={"where": "nexearch", "sm": "top_hty", "query": query},
-            site="네이버 통합검색",
-        )
-        return extract_questions(html, INTEGRATED_PC_URL)
+        else:
+            base = INTEGRATED_PC_URL
+            html = self._get_html(
+                base,
+                params={"where": "nexearch", "sm": "top_hty", "query": query},
+                site="네이버 통합검색",
+            )
+        # 보통은 <a> 링크로 찾고, 결과를 스크립트 데이터로만 그리는 화면이면 원문에서 주소를 찾는다
+        return extract_questions(html, base) or extract_kin_links_raw(html)
 
     def autocomplete(self, query: str) -> list[str]:
         """네이버 검색창 자동완성 목록 (사람들이 실제로 많이 치는 검색어)."""
@@ -504,12 +577,15 @@ class NaverClient:
                 raise NaverError(f"{site} 연결 실패: {e.__class__.__name__}") from e
             finally:
                 self._last_web_request = time.monotonic()
+        if not r.encoding or r.encoding.lower() == "iso-8859-1":
+            r.encoding = r.apparent_encoding or "utf-8"
+        # [연결 점검]에서 실제로 받은 화면을 살펴볼 수 있게 마지막 응답을 남겨 둔다
+        self.last_status = r.status_code
+        self.last_html = r.text or ""
         if r.status_code in (403, 429):
             raise NaverError(f"{site} 이(가) 요청을 거부했습니다({r.status_code}). 수집 간격을 늘려주세요.", fatal=True)
         if r.status_code != 200:
             raise NaverError(f"{site} 응답 오류 {r.status_code}")
-        if not r.encoding or r.encoding.lower() == "iso-8859-1":
-            r.encoding = r.apparent_encoding or "utf-8"
         return r.text
 
 
