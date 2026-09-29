@@ -62,6 +62,23 @@ def run_diagnostics(cfg: AppConfig, client: NaverClient | None = None) -> tuple[
             ok = False
             lines.append(f"[오류] 상세 페이지: {e}")
 
+    targets = cfg.exposure_targets()
+    if targets:
+        product, keyword = targets[0]
+        for source, label in (("pc", "통합검색 PC"), ("mobile", "통합검색 모바일")):
+            if source not in cfg.settings.exposure_sources:
+                continue
+            try:
+                found = client.search_integrated(keyword, source)
+                lines.append(f"[{'OK' if found else '??'}] 상위노출 '{keyword}' {label}: 지식iN 글 {len(found)}개")
+                for it in found[:3]:
+                    lines.append(f"     {found.index(it) + 1}. {it.title}  ({it.url})")
+                if not found:
+                    lines.append("     0개입니다. 이 검색어에 지식iN 글이 안 뜨거나, 네이버 화면 구조가 바뀌었을 수 있습니다.")
+            except NaverError as e:
+                ok = False
+                lines.append(f"[오류] 상위노출 '{keyword}' {label}: {e}")
+
     ai_ok, reason = ai_status()
     lines.append(f"[{'OK' if ai_ok else '--'}] AI 답변 초안: {reason}")
     return ok, lines

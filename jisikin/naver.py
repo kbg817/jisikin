@@ -3,7 +3,9 @@
 - search_api   : 네이버 검색 API (공식, 권장). developers.naver.com 에서 무료 발급.
 - search_web   : 지식iN 검색 결과 페이지를 직접 읽는다. (API 키가 없을 때의 대안)
 - fetch_list   : 지식iN 분야 목록 등, 질문 링크가 있는 아무 페이지에서 질문을 뽑는다.
-- fetch_detail : 질문 상세 페이지에서 본문·답변 수·작성일·내공을 읽는다.
+- fetch_detail : 질문 상세 페이지에서 본문·답변 수·작성일·내공·조회수를 읽는다.
+- search_integrated : 네이버 통합검색(PC/모바일) 결과에서 지식iN 글이 노출된 순서를 읽는다.
+- search_kin_ranked : 지식iN 탭 정확도순 상위 글.
 
 HTML 구조는 네이버가 예고 없이 바꿀 수 있으므로, 특정 class 이름에만 의존하지 않고
 '질문 링크(/qna/detail.naver?...docId=...)' 를 기준으로 최대한 방어적으로 파싱한다.
@@ -26,9 +28,15 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
+MOBILE_USER_AGENT = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
+)
 API_URL = "https://openapi.naver.com/v1/search/kin.json"
 WEB_SEARCH_URL = "https://kin.naver.com/search/list.naver"
 DETAIL_URL = "https://kin.naver.com/qna/detail.naver"
+INTEGRATED_PC_URL = "https://search.naver.com/search.naver"
+INTEGRATED_MOBILE_URL = "https://m.search.naver.com/search.naver"
 
 # 질문 제목이 아닌 링크 문구 (같은 질문으로 가는 '답변하기' 버튼 등)
 _GENERIC_LINK_TEXT = {"답변하기", "답변", "질문", "더보기", "원문보기", "바로가기", "댓글", "공유", "신고"}
@@ -60,6 +68,7 @@ class QuestionDetail:
     answer_count: int | None = None
     asked_at: datetime | None = None
     reward: int | None = None
+    views: int | None = None
 
 
 # ---------------------------------------------------------------- 유틸
@@ -267,7 +276,21 @@ def parse_detail(html: str, now: datetime | None = None) -> QuestionDetail:
     m = re.search(r"내공\s*(\d+)", area_text) if area_text else None
     if m:
         d.reward = int(m.group(1))
+    d.views = _parse_views(soup, area_text)
     return d
+
+
+_VIEWS_RE = re.compile(r"조회\s*수?\s*[:：]?\s*(\d[\d,]*)")
+
+
+def _parse_views(soup: BeautifulSoup, area_text: str) -> int | None:
+    m = _VIEWS_RE.search(area_text) if area_text else None
+    if not m:
+        for el in soup.find_all(class_=re.compile(r"userinfo|info", re.I)):
+            m = _VIEWS_RE.search(_text(el))
+            if m:
+                break
+    return int(m.group(1).replace(",", "")) if m else None
 
 
 def _first(soup: BeautifulSoup, selectors: list[str]) -> Tag | None:
@@ -356,11 +379,12 @@ class NaverClient:
         self._lock = threading.Lock()
 
     # --- 공식 검색 API
-    def search_api(self, query: str, count: int = 50) -> list[RawQuestion]:
+    def search_api(self, query: str, count: int = 50, sort: str = "date") -> list[RawQuestion]:
+        """sort: date(최신순) / sim(정확도순)"""
         if not self.credentials:
             raise NaverError("네이버 API 키가 없습니다. [설정] > API 키에 Client ID / Secret 을 넣어주세요.", fatal=True)
         cid, secret = self.credentials
-        params = {"query": query, "display": max(1, min(count, 100)), "start": 1, "sort": "date"}
+        params = {"query": query, "display": max(1, min(count, 100)), "start": 1, "sort": sort}
         try:
             r = self.session.get(
                 API_URL,
@@ -402,21 +426,46 @@ class NaverClient:
     def fetch_detail(self, url: str) -> QuestionDetail:
         return parse_detail(self._get_html(url))
 
-    def _get_html(self, url: str, params: dict | None = None) -> str:
+    # --- 상위노출 확인
+    def search_integrated(self, query: str, platform: str = "pc") -> list[RawQuestion]:
+        """네이버 통합검색 결과에 노출된 지식iN 글을 화면에 나온 순서대로 돌려준다."""
+        if platform == "mobile":
+            html = self._get_html(
+                INTEGRATED_MOBILE_URL,
+                params={"where": "m", "sm": "mtp_hty", "query": query},
+                headers={"User-Agent": MOBILE_USER_AGENT},
+                site="네이버 모바일 검색",
+            )
+            return extract_questions(html, INTEGRATED_MOBILE_URL)
+        html = self._get_html(
+            INTEGRATED_PC_URL,
+            params={"where": "nexearch", "sm": "top_hty", "query": query},
+            site="네이버 통합검색",
+        )
+        return extract_questions(html, INTEGRATED_PC_URL)
+
+    def search_kin_ranked(self, query: str, count: int = 10) -> list[RawQuestion]:
+        """지식iN 탭 정확도순 상위 글. (API 키가 있으면 API, 없으면 지식iN 검색 화면)"""
+        if self.credentials:
+            return self.search_api(query, count, sort="sim")
+        html = self._get_html(WEB_SEARCH_URL, params={"query": query, "section": "kin"})
+        return extract_questions(html, WEB_SEARCH_URL)[:count]
+
+    def _get_html(self, url: str, params: dict | None = None, headers: dict | None = None, site: str = "지식iN") -> str:
         with self._lock:
             wait = self._last_web_request + self.delay_seconds - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
             try:
-                r = self.session.get(url, params=params, timeout=self.timeout)
+                r = self.session.get(url, params=params, headers=headers, timeout=self.timeout)
             except requests.RequestException as e:
-                raise NaverError(f"지식iN 연결 실패: {e.__class__.__name__}") from e
+                raise NaverError(f"{site} 연결 실패: {e.__class__.__name__}") from e
             finally:
                 self._last_web_request = time.monotonic()
         if r.status_code in (403, 429):
-            raise NaverError(f"지식iN 이 요청을 거부했습니다({r.status_code}). 수집 간격을 늘려주세요.", fatal=True)
+            raise NaverError(f"{site} 이(가) 요청을 거부했습니다({r.status_code}). 수집 간격을 늘려주세요.", fatal=True)
         if r.status_code != 200:
-            raise NaverError(f"지식iN 응답 오류 {r.status_code}")
+            raise NaverError(f"{site} 응답 오류 {r.status_code}")
         if not r.encoding or r.encoding.lower() == "iso-8859-1":
             r.encoding = r.apparent_encoding or "utf-8"
         return r.text

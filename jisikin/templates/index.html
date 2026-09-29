@@ -16,10 +16,20 @@
 </header>
 
 <div class="wrap">
+  <nav class="views" id="views">
+    <button class="view active" data-view="feed">새 질문 <span class="muted">실시간</span></button>
+    <button class="view" data-view="exposure">상위노출 글 <span class="muted">검색 상위에 뜨는 글</span></button>
+  </nav>
   <nav class="tabs" id="tabs"></nav>
   <div class="chips" id="chips"></div>
 
-  <div class="toolbar">
+  <div class="toolbar" id="exp-toolbar" hidden>
+    <span class="exp-status" id="exp-status"></span>
+    <label title="답변완료/제외한 글 숨기기"><input type="checkbox" id="x-unanswered"> 처리 안 한 글만</label>
+    <button class="btn primary small" id="exp-check-btn" type="button">지금 확인</button>
+  </div>
+
+  <div class="toolbar" id="feed-toolbar">
     <select id="f-status" title="상태">
       <option value="todo">할 일</option>
       <option value="answered">답변완료</option>

@@ -33,6 +33,19 @@ class Category:
 
 
 @dataclass
+class Exposure:
+    """상위노출 글을 확인할 검색어. keywords + (regions × region_terms 조합)."""
+
+    keywords: list[str] = field(default_factory=list)
+    regions: list[str] = field(default_factory=list)
+    region_terms: list[str] = field(default_factory=list)
+
+    def queries(self) -> list[str]:
+        combos = [f"{r} {t}" for r in self.regions for t in self.region_terms]
+        return _dedupe(list(self.keywords) + combos)
+
+
+@dataclass
 class Product:
     id: str
     name: str
@@ -44,12 +57,16 @@ class Product:
     url: str = ""
     color: str = "#2563eb"
     answer_guide: str = ""
+    exposure: Exposure = field(default_factory=Exposure)
 
     def search_queries(self) -> list[str]:
         queries = list(self.keywords)
         for cat in self.categories:
             queries.extend(cat.search)
         return _dedupe(queries)
+
+
+EXPOSURE_SOURCES = {"pc": "통합검색 PC", "mobile": "통합검색 모바일", "kin": "지식iN탭"}
 
 
 @dataclass
@@ -63,6 +80,9 @@ class Settings:
     max_age_days: int = 14
     keep_days: int = 60
     port: int = 5000
+    exposure_interval_hours: int = 12
+    exposure_top_n: int = 5
+    exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin"])
 
 
 @dataclass
@@ -86,6 +106,9 @@ class AppConfig:
         for p in self.products:
             queries.extend(p.search_queries())
         return _dedupe(queries)
+
+    def exposure_targets(self) -> list[tuple[Product, str]]:
+        return [(p, q) for p in self.products for q in p.exposure.queries()]
 
 
 def _dedupe(items: list[str]) -> list[str]:
@@ -132,6 +155,8 @@ def _typed(section: dict, cls, where: str):
         if not hasattr(obj, key):
             continue  # 모르는 항목은 무시 (오타 때문에 실행이 막히지 않게)
         default = getattr(obj, key)
+        if isinstance(default, list):
+            continue  # 목록 항목은 호출한 쪽에서 따로 검증
         try:
             if isinstance(default, bool):
                 if isinstance(value, str):
@@ -163,6 +188,14 @@ def parse_config(text: str) -> AppConfig:
         raise ConfigError("settings.source 는 auto, api, web 중 하나여야 합니다.")
     settings.results_per_keyword = max(1, min(settings.results_per_keyword, 100))
     settings.request_delay_seconds = max(0.0, settings.request_delay_seconds)
+    settings.exposure_top_n = max(1, min(settings.exposure_top_n, 20))
+    raw_sources = (data.get("settings") or {}).get("exposure_sources")
+    if raw_sources is not None:
+        sources = _str_list(raw_sources, "settings.exposure_sources")
+        bad = [s for s in sources if s not in EXPOSURE_SOURCES]
+        if bad:
+            raise ConfigError(f"settings.exposure_sources 에는 pc, mobile, kin 만 쓸 수 있습니다. (잘못된 값: {', '.join(bad)})")
+        settings.exposure_sources = list(dict.fromkeys(sources))
 
     ai = _typed(data.get("ai") or {}, AISettings, "ai")
     if ai.effort not in ("low", "medium", "high", "xhigh", "max"):
@@ -213,6 +246,16 @@ def parse_config(text: str) -> AppConfig:
             min_score = float(rp.get("min_score", 2))
         except (TypeError, ValueError) as e:
             raise ConfigError(f"{where}.min_score 는 숫자여야 합니다.") from e
+        rx = rp.get("exposure") or {}
+        if not isinstance(rx, dict):
+            raise ConfigError(f"{where}.exposure 는 keywords / regions / region_terms 항목을 가져야 합니다.")
+        exposure = Exposure(
+            keywords=_str_list(rx.get("keywords"), f"{where}.exposure.keywords"),
+            regions=_str_list(rx.get("regions"), f"{where}.exposure.regions"),
+            region_terms=_str_list(rx.get("region_terms"), f"{where}.exposure.region_terms"),
+        )
+        if exposure.regions and not exposure.region_terms:
+            raise ConfigError(f"{where}.exposure 에 regions 를 넣었다면 region_terms (예: [건선, 건선 피부과]) 도 넣어 주세요.")
 
         products.append(
             Product(
@@ -226,6 +269,7 @@ def parse_config(text: str) -> AppConfig:
                 url=str(rp.get("url") or "").strip(),
                 color=str(rp.get("color") or "#2563eb").strip(),
                 answer_guide=str(rp.get("answer_guide") or "").strip(),
+                exposure=exposure,
             )
         )
     return AppConfig(settings=settings, ai=ai, products=products)

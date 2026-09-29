@@ -15,8 +15,9 @@ from .collector import collect, effective_interval, estimate_api_calls_per_day, 
 from .config import AppConfig, ConfigError
 from .diagnose import run_diagnostics
 from .drafter import DraftError, ai_status, generate_draft
+from .exposure import check_exposure
 from .matcher import Matcher
-from .storage import STATUSES, Store, iso, now_kst
+from .storage import STATUSES, TODO_STATUSES, Store, iso, now_kst
 
 API_DAILY_LIMIT = 25000
 
@@ -28,11 +29,14 @@ class AppState:
         self.cfg: AppConfig = config_mod.load_config(self.config_path)
         self.store = Store(db_path)
         self.running = False
+        self.running_kind = ""  # collect / exposure
         self.next_run_at: datetime | None = None
+        self.next_exposure_at: datetime | None = None
         self.logs: deque[str] = deque(maxlen=300)
         self._run_lock = threading.Lock()
         self._wake = threading.Event()
         self._force = False
+        self._force_exposure = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         # 설정이 바뀌었을 수 있으니 시작할 때 한 번 전체 재분류
@@ -52,31 +56,48 @@ class AppState:
         self._wake.set()  # 수집 주기 변경 반영
         return cfg
 
-    # --- 수집
-    def run_collection(self):
+    # --- 수집 / 상위노출 확인 (동시에 하나만 실행)
+    def _run(self, kind: str, label: str, job):
         if not self._run_lock.acquire(blocking=False):
             return None
-        self.running = True
+        self.running, self.running_kind = True, kind
         try:
-            self.log("수집 시작")
-            summary = collect(self.cfg, self.store, log=self.log)
-            self.log("수집 완료 — " + summary.text())
+            self.log(f"{label} 시작")
+            summary = job()
+            self.log(f"{label} 완료 — " + summary.text())
             return summary
         except Exception:
-            self.log("수집 중 오류:\n" + traceback.format_exc())
+            self.log(f"{label} 중 오류:\n" + traceback.format_exc())
             return None
         finally:
-            self.running = False
+            self.running, self.running_kind = False, ""
             self._run_lock.release()
 
-    def trigger(self) -> bool:
-        if self.running:
+    def run_collection(self):
+        return self._run("collect", "수집", lambda: collect(self.cfg, self.store, log=self.log))
+
+    def run_exposure(self):
+        return self._run("exposure", "상위노출 확인", lambda: check_exposure(self.cfg, self.store, log=self.log))
+
+    def exposure_interval_hours(self) -> int:
+        h = self.cfg.settings.exposure_interval_hours
+        return h if h > 0 and self.cfg.exposure_targets() else 0
+
+    def trigger(self, kind: str = "collect") -> bool:
+        """지금 실행. 다른 작업이 진행 중이면 끝난 뒤 이어서 실행한다."""
+        if self.running and self.running_kind == kind:
             return False
         if self._thread and self._thread.is_alive():
-            self._force = True
+            if kind == "exposure":
+                self._force_exposure = True
+            else:
+                self._force = True
             self._wake.set()
-        else:
-            threading.Thread(target=self.run_collection, daemon=True).start()
+            return True
+        if self.running:
+            return False
+        target = self.run_exposure if kind == "exposure" else self.run_collection
+        threading.Thread(target=target, daemon=True).start()
         return True
 
     def start_scheduler(self) -> None:
@@ -100,10 +121,26 @@ class AppState:
                 self.next_run_at = None
             elif self.next_run_at and self.next_run_at > now + timedelta(minutes=interval):
                 self.next_run_at = now + timedelta(minutes=interval)  # 주기를 줄인 경우
+
+            hours = self.exposure_interval_hours()
+            now = now_kst()
+            if hours > 0 and self.next_exposure_at is None:
+                last = self.store.last_exposure_time()  # 재시작해도 주기를 이어서
+                self.next_exposure_at = last + timedelta(hours=hours) if last else now
+            if self._force_exposure or (hours > 0 and now >= self.next_exposure_at):
+                self._force_exposure = False
+                self.run_exposure()
+                self.next_exposure_at = now_kst() + timedelta(hours=hours) if hours > 0 else None
+            elif hours <= 0:
+                self.next_exposure_at = None
+            elif self.next_exposure_at > now + timedelta(hours=hours):
+                self.next_exposure_at = now + timedelta(hours=hours)
+
             wait = 60.0
-            if self.next_run_at:
-                wait = max(1.0, min(wait, (self.next_run_at - now_kst()).total_seconds()))
-            self._wake.wait(timeout=wait)
+            for t in (self.next_run_at, self.next_exposure_at):
+                if t:
+                    wait = min(wait, (t - now_kst()).total_seconds())
+            self._wake.wait(timeout=max(1.0, wait))
             self._wake.clear()
 
 
@@ -131,17 +168,60 @@ def create_app(state: AppState) -> Flask:
     def api_meta():
         cfg = state.cfg
         ok, reason = ai_status()
-        runs = state.store.recent_runs(1)
+        runs = state.store.recent_runs(1, exclude_mode="exposure")
+        exp_runs = state.store.recent_runs(1, mode="exposure")
         return jsonify(
             products=product_payload(cfg),
             counts=state.store.todo_counts(cfg.settings.max_age_days),
             running=state.running,
+            running_kind=state.running_kind,
             last_run=runs[0] if runs else None,
             next_run_at=iso(state.next_run_at),
             interval=effective_interval(cfg),
             mode=resolve_mode(cfg),
             ai={"enabled": ok, "reason": reason},
+            exposure={
+                "keywords": len(cfg.exposure_targets()),
+                "interval_hours": state.exposure_interval_hours(),
+                "next_at": iso(state.next_exposure_at),
+                "last_run": exp_runs[0] if exp_runs else None,
+                "sources": [{"id": s, "name": config_mod.EXPOSURE_SOURCES[s]} for s in cfg.settings.exposure_sources],
+            },
         )
+
+    @app.get("/api/exposure")
+    def api_exposure():
+        a = request.args
+        groups = state.store.latest_exposures(product=a.get("product") or None)
+        order = {(p.id, kw): i for i, (p, kw) in enumerate(state.cfg.exposure_targets())}
+        keep = (
+            "doc_id url title snippet body answer_count reward asked_at views views_per_day views_per_day_kind "
+            "status draft ranks prev_ranks best_rank categories matches detail_fetched_at first_seen"
+        ).split()
+        out = []
+        for g in groups:
+            if (g["product"], g["keyword"]) not in order:
+                continue  # 설정에서 지운 검색어
+            posts = g["posts"]
+            if a.get("unanswered") == "1":
+                posts = [p for p in posts if p["status"] in TODO_STATUSES]
+            items = []
+            for p in posts:
+                item = {k: p.get(k) for k in keep}
+                item["body"] = (p.get("body") or "")[:300]
+                item["product"] = g["product"]
+                items.append(item)
+            out.append({**{k: g[k] for k in ("product", "keyword", "checked_at", "sources")}, "posts": items})
+        # 노출 글이 있는 검색어 먼저 (설정 순서 유지), 노출 글이 없는 검색어는 아래로
+        out.sort(key=lambda g: (not g["posts"], order[(g["product"], g["keyword"])]))
+        return jsonify(groups=out)
+
+    @app.post("/api/exposure/check")
+    def api_exposure_check():
+        require_api_header()
+        if not state.cfg.exposure_targets():
+            return jsonify(error="설정에 상위노출 검색어(exposure)가 없습니다"), 400
+        return jsonify(started=state.trigger("exposure"))
 
     @app.get("/api/questions")
     def api_questions():
@@ -184,7 +264,7 @@ def create_app(state: AppState) -> Flask:
         if not q:
             return jsonify(error="질문을 찾을 수 없습니다"), 404
         cfg = state.cfg
-        product = cfg.product(q.get("product"))
+        product = cfg.product(q.get("product")) or cfg.product(state.store.exposure_product(doc_id))
         if product is None and q.get("matches"):
             product = cfg.product(q["matches"][0].get("product_id"))
         if product is None:
@@ -267,6 +347,8 @@ def create_app(state: AppState) -> Flask:
             has_naver_keys=config_mod.naver_credentials() is not None,
             interval=effective_interval(cfg),
             query_count=len(cfg.all_search_queries()),
+            exposure_count=len(cfg.exposure_targets()),
+            exposure_hours=state.exposure_interval_hours(),
             api_calls=estimate_api_calls_per_day(cfg),
             api_limit=API_DAILY_LIMIT,
             ai_ok=ai_ok,

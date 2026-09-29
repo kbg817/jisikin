@@ -80,6 +80,8 @@
             {% if api_calls > api_limit * 0.8 %}<br><b style="color:#dc2626">한도에 가깝습니다. 간격을 늘리거나 검색어를 줄이세요.</b>{% endif %}
           </dd>
           {% endif %}
+          <dt>상위노출 확인</dt>
+          <dd>{% if exposure_hours %}{{ exposure_hours }}시간마다, 검색어 {{ exposure_count }}개{% elif exposure_count %}꺼짐 (검색어 {{ exposure_count }}개){% else %}검색어 없음{% endif %}</dd>
           <dt>AI 초안</dt>
           <dd class="{{ 'ok-dot' if ai_ok else 'no-dot' }}">{{ ai_reason }}</dd>
         </dl>
@@ -103,17 +105,18 @@
       <div class="panel">
         <h2>최근 수집 기록</h2>
         <table class="runs">
-          <tr><th>시작</th><th>새 질문</th><th>관련</th><th>상세</th></tr>
+          <tr><th>시작</th><th>종류</th><th>새 글</th><th>관련/노출</th><th>상세</th></tr>
           {% for r in runs %}
           <tr>
             <td>{{ r.started_at[5:16].replace("T", " ") }}</td>
+            <td>{{ "상위노출" if r.mode == "exposure" else "새 질문" }}</td>
             <td>{{ r.new_total }}</td>
-            <td>{{ r.new_relevant }}</td>
+            <td>{{ r.fetched if r.mode == "exposure" else r.new_relevant }}</td>
             <td>{{ r.details }}</td>
           </tr>
-          {% if r.errors %}<tr><td colspan="4" class="err">{{ r.errors[:3] | join(" / ") }}</td></tr>{% endif %}
+          {% if r.errors %}<tr><td colspan="5" class="err">{{ r.errors[:3] | join(" / ") }}</td></tr>{% endif %}
           {% else %}
-          <tr><td colspan="4" class="muted">기록 없음</td></tr>
+          <tr><td colspan="5" class="muted">기록 없음</td></tr>
           {% endfor %}
         </table>
       </div>

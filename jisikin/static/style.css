@@ -27,6 +27,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
@@ -163,6 +164,40 @@ textarea.config {
 .ok-dot::before { content: "●"; color: #16a34a; margin-right: 4px; }
 .no-dot::before { content: "●"; color: #9ca3af; margin-right: 4px; }
 
+/* 보기 전환: 새 질문 / 상위노출 글 */
+.views { display: flex; gap: 0; margin-bottom: 14px; border-bottom: 2px solid var(--line); }
+.view {
+  border: 0; background: none; cursor: pointer; padding: 8px 16px 10px; font-size: 16px; font-weight: 600;
+  color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -2px;
+}
+.view .muted { font-size: 12px; font-weight: 400; margin-left: 4px; }
+.view.active { color: var(--text); border-bottom-color: var(--accent); }
+.exp-status { flex: 1; color: var(--muted); font-size: 13px; min-width: 200px; }
+
+/* 상위노출 글 */
+.kw-group { margin-bottom: 22px; }
+.kw-head { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 8px; font-size: 13px; }
+.kw-head h3 { margin: 0; font-size: 17px; }
+.kw-head h3 a { text-decoration: none; border-bottom: 2px solid var(--c, var(--line)); }
+.kw-head .srcs { display: flex; gap: 6px; flex-wrap: wrap; }
+.src { background: var(--chip); border-radius: 4px; padding: 1px 7px; color: var(--muted); }
+.src.err { background: #fee2e2; color: #991b1b; cursor: help; }
+.ranks { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.rank { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; color: var(--muted); }
+.rank b { color: var(--text); }
+.rank.top { border-color: var(--c, var(--accent)); }
+.rank em { font-style: normal; font-size: 11px; margin-left: 3px; font-weight: 700; }
+.rk-up { color: #16a34a; }
+.rk-down { color: #dc2626; }
+.rk-new { color: #2563eb; }
+.badge.hot { background: #ffedd5; color: #9a3412; font-weight: 600; }
+.card.done { opacity: .6; }
+.empty.small { padding: 14px; font-size: 13px; background: var(--panel); border: 1px dashed var(--line); border-radius: 10px; text-align: left; }
+@media (prefers-color-scheme: dark) {
+  .src.err { background: #450a0a; color: #fecaca; }
+  .badge.hot { background: #431407; color: #fed7aa; }
+}
+
 /* 좁은 화면 (휴대폰) */
 @media (max-width: 640px) {
   header.top { padding: 10px 16px; gap: 8px; }
@@ -172,4 +207,6 @@ textarea.config {
   .card { flex-direction: column; gap: 10px; }
   .actions { flex-direction: row; flex-wrap: wrap; }
   .toolbar { gap: 8px 12px; }
+  .view { flex: 1; padding: 8px 6px 10px; }
+  .view .muted { display: none; }
 }

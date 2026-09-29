@@ -4,10 +4,12 @@ const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = "jisikin.filters";
 
 const state = {
+  view: "feed", // feed: 새 질문 / exposure: 상위노출 글
   product: "", category: "", status: "todo", sort: "priority",
-  unanswered: false, low: false, q: "",
+  unanswered: false, low: false, q: "", expUnanswered: false,
 };
 let meta = null;
+let exposureGroups = null;
 let wasRunning = false;
 let listTimer = null;
 
@@ -59,7 +61,12 @@ function untilTime(iso) {
   if (!iso) return "";
   const sec = (new Date(iso).getTime() - Date.now()) / 1000;
   if (sec <= 60) return "곧";
+  if (sec >= 5400) return `${Math.round(sec / 3600)}시간 후`;
   return `${Math.round(sec / 60)}분 후`;
+}
+
+function num(n) {
+  return Number(n).toLocaleString("ko-KR");
 }
 
 let toastTimer = null;
@@ -78,21 +85,29 @@ function productById(id) {
 // ---------------------------------------------------------------- 상단 상태/탭
 async function loadMeta() {
   meta = await api("/api/meta");
+  renderViews();
   renderStatus();
   renderTabs();
   renderChips();
   renderNotice();
+  renderExposureBar();
   if (wasRunning && !meta.running) loadList();
   wasRunning = meta.running;
   const newTotal = Object.values(meta.counts.products).reduce((a, p) => a + p.new, 0);
   document.title = (newTotal ? `(${newTotal}) ` : "") + "지식iN 질문 수집기";
 }
 
+function renderViews() {
+  document.querySelectorAll(".view").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
+  $("#feed-toolbar").hidden = state.view !== "feed";
+  $("#exp-toolbar").hidden = state.view !== "exposure";
+}
+
 function renderStatus() {
   const r = meta.last_run;
   const parts = [];
   parts.push(meta.mode === "api" ? "네이버 검색 API" : "웹 검색 모드");
-  if (meta.running) parts.push("<b>수집 중…</b>");
+  if (meta.running) parts.push(meta.running_kind === "exposure" ? "<b>상위노출 확인 중…</b>" : "<b>수집 중…</b>");
   else if (r) {
     parts.push(`마지막 수집 ${relTime(r.finished_at || r.started_at)} · 새 관련 질문 ${r.new_relevant}건`);
   } else parts.push("아직 수집 기록이 없습니다");
@@ -101,12 +116,42 @@ function renderStatus() {
   parts.push(`오늘 답변 ${meta.counts.answered_today}건`);
   $("#run-status").innerHTML = parts.join(" · ");
   const btn = $("#collect-btn");
-  btn.disabled = meta.running;
-  btn.textContent = meta.running ? "수집 중…" : "지금 수집";
+  const collecting = meta.running && meta.running_kind === "collect";
+  btn.disabled = collecting;
+  btn.textContent = collecting ? "수집 중…" : "지금 수집";
+}
+
+function renderExposureBar() {
+  const x = meta.exposure;
+  const parts = [];
+  if (meta.running && meta.running_kind === "exposure") parts.push("<b>확인 중…</b> (검색어가 많으면 몇 분 걸립니다)");
+  else if (x.last_run) parts.push(`마지막 확인 ${relTime(x.last_run.finished_at || x.last_run.started_at)}`);
+  else parts.push("아직 확인 기록이 없습니다");
+  if (x.interval_hours) parts.push(`${x.interval_hours}시간마다 자동 확인${x.next_at && !meta.running ? ` (다음 ${untilTime(x.next_at)})` : ""}`);
+  parts.push(`검색어 ${x.keywords}개`);
+  $("#exp-status").innerHTML = parts.join(" · ");
+  const btn = $("#exp-check-btn");
+  const checking = meta.running && meta.running_kind === "exposure";
+  btn.disabled = checking || !x.keywords;
+  btn.textContent = checking ? "확인 중…" : "지금 확인";
+}
+
+function exposureCounts() {
+  // 제품별: 상위노출 글 중 아직 처리 안 한 글 수
+  const counts = {};
+  for (const g of exposureGroups || []) {
+    const c = counts[g.product] || (counts[g.product] = { total: 0, new: 0, seen: new Set() });
+    for (const p of g.posts) {
+      if (c.seen.has(p.doc_id) || !["new", "opened"].includes(p.status)) continue;
+      c.seen.add(p.doc_id);
+      c.total += 1;
+    }
+  }
+  return counts;
 }
 
 function renderTabs() {
-  const counts = meta.counts.products;
+  const counts = state.view === "exposure" ? exposureCounts() : meta.counts.products;
   const all = Object.values(counts).reduce((a, p) => ({ total: a.total + p.total, new: a.new + p.new }), { total: 0, new: 0 });
   const tabs = [{ id: "", name: "전체", color: "", c: all }]
     .concat(meta.products.map((p) => ({ ...p, c: counts[p.id] || { total: 0, new: 0 } })));
@@ -119,7 +164,7 @@ function renderTabs() {
 
 function renderChips() {
   const p = productById(state.product);
-  if (!p) { $("#chips").innerHTML = ""; return; }
+  if (!p || state.view !== "feed") { $("#chips").innerHTML = ""; return; }
   const cc = meta.counts.products[p.id]?.categories || {};
   const chips = [{ name: "", label: "모든 카테고리" }].concat(p.categories.map((c) => ({ name: c, label: c })));
   $("#chips").innerHTML = chips.map((c) => `
@@ -129,10 +174,11 @@ function renderChips() {
 }
 
 function renderNotice() {
-  const r = meta.last_run;
+  const r = state.view === "exposure" ? meta.exposure.last_run : meta.last_run;
+  const what = state.view === "exposure" ? "상위노출 확인" : "수집";
   const notes = [];
   if (r && r.errors && r.errors.length) {
-    notes.push(`<b>마지막 수집에서 오류 ${r.errors.length}건</b><ul>${r.errors.slice(0, 5).map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`);
+    notes.push(`<b>마지막 ${what}에서 오류 ${r.errors.length}건</b><ul>${r.errors.slice(0, 5).map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`);
   }
   if (meta.mode === "web") {
     notes.push("네이버 검색 API 키가 없어 <b>웹 검색 모드</b>로 동작 중입니다. 더 빠르고 안정적으로 수집하려면 <a href='/settings'>설정</a>에서 네이버 API 키를 붙여넣으세요. (발급 방법도 거기 있어요)");
@@ -142,6 +188,7 @@ function renderNotice() {
 
 // ---------------------------------------------------------------- 질문 목록
 async function loadList() {
+  if (state.view === "exposure") return loadExposure();
   const params = new URLSearchParams({
     product: state.product, category: state.category, status: state.status, sort: state.sort,
     unanswered: state.unanswered ? "1" : "", include_low: state.low ? "1" : "", q: state.q,
@@ -169,27 +216,12 @@ function cardHtml(q) {
   const recent = q.first_seen && (Date.now() - new Date(q.first_seen).getTime()) < 3 * 3600 * 1000;
   const isNew = q.status === "new" && recent;
 
-  const ans = q.answer_count;
-  let ansBadge = `<span class="badge" title="상세 정보를 아직 못 가져왔습니다">답변 ?</span>`;
-  if (ans === 0) ansBadge = `<span class="badge zero">답변 0</span>`;
-  else if (ans != null) ansBadge = `<span class="badge ${ans >= 5 ? "many" : ""}">답변 ${ans}</span>`;
-
+  const ansBadge = answerBadge(q);
   const time = q.asked_at ? `작성 ${relTime(q.asked_at)}` : `수집 ${relTime(q.first_seen)}`;
   const snippet = q.body || q.snippet || "";
   const cats = (q.categories || []).length ? q.categories : (bestMatch.categories || []);
   const others = (q.matches || []).filter((m) => m.relevant && m.product_id !== q.product)
     .map((m) => productById(m.product_id)?.name).filter(Boolean);
-
-  const actions = [];
-  if (q.status === "new" || q.status === "opened") {
-    actions.push(`<button class="btn small" data-act="answered" title="답변을 달았으면 눌러주세요">✓ 답변완료</button>`);
-    actions.push(`<button class="btn small" data-act="skipped" title="답변하지 않을 질문">제외</button>`);
-  } else {
-    actions.push(`<button class="btn small" data-act="opened">할 일로</button>`);
-  }
-  if (meta.ai.enabled) {
-    actions.push(`<button class="btn small" data-act="draft">${q.draft ? "초안 보기" : "AI 초안"}</button>`);
-  }
 
   return `
   <article class="card ${low ? "low" : ""} ${q.status === "opened" ? "opened" : ""}" data-id="${esc(q.doc_id)}" style="${color ? `--c:${esc(color)}` : ""}">
@@ -206,8 +238,41 @@ function cardHtml(q) {
         <span>${time}</span>
         <span title="관련도 점수">점수 ${Math.round(bestMatch.score || q.score || 0)}</span>
         ${others.length ? `<span>· ${esc(others.join(", "))}에도 해당</span>` : ""}
-        ${q.status === "answered" ? "<b>답변완료</b>" : q.status === "skipped" ? "<b>제외함</b>" : ""}
+        ${statusLabel(q)}
       </div>
+      ${draftBoxHtml(q)}
+    </div>
+    <div class="actions">${actionsHtml(q)}</div>
+  </article>`;
+}
+
+function statusLabel(q) {
+  return q.status === "answered" ? "<b>답변완료</b>" : q.status === "skipped" ? "<b>제외함</b>" : "";
+}
+
+function answerBadge(q) {
+  const ans = q.answer_count;
+  if (ans === 0) return `<span class="badge zero">답변 0</span>`;
+  if (ans != null) return `<span class="badge ${ans >= 5 ? "many" : ""}">답변 ${ans}</span>`;
+  return `<span class="badge" title="상세 정보를 아직 못 가져왔습니다">답변 ?</span>`;
+}
+
+function actionsHtml(q) {
+  const actions = [];
+  if (q.status === "new" || q.status === "opened") {
+    actions.push(`<button class="btn small" data-act="answered" title="답변을 달았으면 눌러주세요">✓ 답변완료</button>`);
+    actions.push(`<button class="btn small" data-act="skipped" title="답변하지 않을 글">제외</button>`);
+  } else {
+    actions.push(`<button class="btn small" data-act="opened">할 일로</button>`);
+  }
+  if (meta.ai.enabled) {
+    actions.push(`<button class="btn small" data-act="draft">${q.draft ? "초안 보기" : "AI 초안"}</button>`);
+  }
+  return actions.join("");
+}
+
+function draftBoxHtml(q) {
+  return `
       <div class="draft" hidden>
         <textarea spellcheck="false">${esc(q.draft || "")}</textarea>
         <div class="row">
@@ -216,16 +281,115 @@ function cardHtml(q) {
           <button class="btn small" data-act="regen">다시 작성</button>
           <span class="hint">AI 초안입니다. 내용을 확인·수정한 뒤 직접 등록하세요.</span>
         </div>
+      </div>`;
+}
+
+// ---------------------------------------------------------------- 상위노출 글
+async function loadExposure() {
+  const data = await api("/api/exposure");
+  exposureGroups = data.groups; // 탭 개수는 전체 기준
+  renderTabs();
+  let groups = data.groups.filter((g) => !state.product || g.product === state.product);
+  if (state.expUnanswered) {
+    groups = groups.map((g) => ({ ...g, posts: g.posts.filter((p) => ["new", "opened"].includes(p.status)) }));
+  }
+  renderExposure(groups);
+}
+
+function rankBadges(q) {
+  return meta.exposure.sources.map((s) => {
+    const rank = q.ranks?.[s.id];
+    if (rank == null) return "";
+    let change = "";
+    if (q.prev_ranks && s.id in q.prev_ranks) {
+      const prev = q.prev_ranks[s.id];
+      if (prev == null) change = '<em class="rk-new">NEW</em>';
+      else if (prev > rank) change = `<em class="rk-up">▲${prev - rank}</em>`;
+      else if (prev < rank) change = `<em class="rk-down">▼${rank - prev}</em>`;
+    }
+    return `<span class="rank ${rank === 1 ? "top" : ""}">${esc(s.name)} <b>${rank}위</b>${change}</span>`;
+  }).join("");
+}
+
+function viewsBadges(q) {
+  const out = [];
+  if (q.views != null) out.push(`<span class="badge">조회 ${num(q.views)}</span>`);
+  if (q.views_per_day != null) {
+    const label = q.views_per_day_kind === "recent" ? `최근 하루 +${num(Math.round(q.views_per_day))}` : `하루 평균 ${num(Math.round(q.views_per_day))}`;
+    const hot = q.views_per_day >= 30;
+    out.push(`<span class="badge ${hot ? "hot" : ""}" title="${q.views_per_day_kind === "recent" ? "최근 확인 사이 조회수 증가량" : "작성일 이후 평균 조회수"}">${label}</span>`);
+  }
+  return out.join("");
+}
+
+function exposureCardHtml(q) {
+  const p = productById(q.product);
+  const terms = (q.matches || []).flatMap((m) => m.terms || []);
+  const snippet = q.body || q.snippet || "";
+  const time = q.asked_at ? `작성 ${relTime(q.asked_at)}` : "";
+  const done = q.status === "answered" || q.status === "skipped";
+  return `
+  <article class="card exp ${done ? "done" : ""} ${q.status === "opened" ? "opened" : ""}" data-id="${esc(q.doc_id)}" style="${p ? `--c:${esc(p.color)}` : ""}">
+    <div class="card-main">
+      <div class="ranks">${rankBadges(q)}</div>
+      <a class="title" href="${esc(q.url)}" target="_blank" rel="noopener" data-open>${highlight(q.title, terms)}</a>
+      ${snippet ? `<p class="snippet">${highlight(snippet, terms)}</p>` : ""}
+      <div class="meta">
+        ${viewsBadges(q)}
+        ${answerBadge(q)}
+        ${time ? `<span>${time}</span>` : ""}
+        ${statusLabel(q)}
       </div>
+      ${draftBoxHtml(q)}
     </div>
-    <div class="actions">${actions.join("")}</div>
+    <div class="actions">${actionsHtml(q)}</div>
   </article>`;
+}
+
+function renderExposure(groups) {
+  const list = $("#list");
+  if (!meta.exposure.keywords) {
+    list.innerHTML = `<div class="empty">상위노출을 확인할 검색어가 없습니다.<br><span class="muted"><a href="/settings">설정</a>에서 제품별 <code>exposure</code> 에 검색어(예: 인천 건선)를 넣어주세요.</span></div>`;
+    return;
+  }
+  if (!groups.length) {
+    list.innerHTML = `<div class="empty">아직 확인 기록이 없습니다.<br><span class="muted">[지금 확인]을 누르면 검색어별로 지금 상위에 노출된 지식iN 글을 찾아옵니다.</span></div>`;
+    return;
+  }
+  list.innerHTML = groups.map((g) => {
+    const p = productById(g.product);
+    const srcs = meta.exposure.sources.map((s) => {
+      const info = g.sources[s.id];
+      if (!info) return "";
+      if (info.error) return `<span class="src err" title="${esc(info.error)}">${esc(s.name)} 오류</span>`;
+      return `<span class="src">${esc(s.name)} ${info.count}개</span>`;
+    }).join("");
+    const body = g.posts.length
+      ? g.posts.map(exposureCardHtml).join("")
+      : `<div class="empty small">${state.expUnanswered ? "남은 글이 없습니다 (모두 처리함)" : "지금 이 검색어로 노출되는 지식iN 글이 없습니다"}</div>`;
+    return `
+    <section class="kw-group" style="${p ? `--c:${esc(p.color)}` : ""}">
+      <header class="kw-head">
+        <h3><a href="https://search.naver.com/search.naver?query=${encodeURIComponent(g.keyword)}" target="_blank" rel="noopener" title="네이버에서 직접 검색해 보기">${esc(g.keyword)}</a></h3>
+        ${p ? `<span class="badge product">${esc(p.name)}</span>` : ""}
+        <span class="muted">확인 ${relTime(g.checked_at)}</span>
+        <span class="srcs">${srcs}</span>
+      </header>
+      ${body}
+    </section>`;
+  }).join("");
 }
 
 // ---------------------------------------------------------------- 동작
 async function setStatus(card, status) {
   const id = card.dataset.id;
   await api(`/api/questions/${id}/status`, { status });
+  if (state.view === "exposure") {
+    // 같은 글이 여러 검색어에 걸쳐 있을 수 있으니 목록을 다시 그림
+    toast(status === "answered" ? "답변완료로 표시했습니다" : status === "skipped" ? "제외했습니다" : "할 일로 되돌렸습니다");
+    loadMeta();
+    return loadExposure();
+  }
   if (status === "opened" && state.status === "todo") {
     card.classList.add("opened");
   } else if (state.status !== "all") {
@@ -277,6 +441,14 @@ async function copyText(text) {
 }
 
 document.addEventListener("click", async (ev) => {
+  const view = ev.target.closest(".view");
+  if (view) {
+    state.view = view.dataset.view;
+    saveFilters(); renderViews(); renderTabs(); renderChips(); renderNotice();
+    $("#list").innerHTML = "";
+    loadList();
+    return;
+  }
   const tab = ev.target.closest(".tab");
   if (tab) {
     state.product = tab.dataset.product;
@@ -293,7 +465,8 @@ document.addEventListener("click", async (ev) => {
   const card = ev.target.closest(".card");
   if (!card) return;
   if (ev.target.closest("[data-open]")) {
-    if (!card.classList.contains("opened") && state.status === "todo") {
+    const todo = state.view === "exposure" ? !card.classList.contains("done") : state.status === "todo";
+    if (!card.classList.contains("opened") && todo) {
       api(`/api/questions/${card.dataset.id}/status`, { status: "opened" }).then(() => card.classList.add("opened")).catch(() => {});
     }
     return; // 링크는 새 탭으로 열림
@@ -310,7 +483,9 @@ document.addEventListener("click", async (ev) => {
       toast("초안을 복사했습니다");
       if (act === "copy-open") {
         window.open(card.querySelector(".title").href, "_blank", "noopener");
-        if (state.status === "todo") api(`/api/questions/${card.dataset.id}/status`, { status: "opened" }).catch(() => {});
+        if (state.view === "exposure" || state.status === "todo") {
+          api(`/api/questions/${card.dataset.id}/status`, { status: "opened" }).catch(() => {});
+        }
       }
     }
   } catch (e) {
@@ -321,7 +496,18 @@ document.addEventListener("click", async (ev) => {
 $("#collect-btn").addEventListener("click", async () => {
   try {
     const r = await api("/api/collect", {});
-    toast(r.started ? "수집을 시작했습니다" : "이미 수집 중입니다");
+    toast(r.started ? (meta.running ? "지금 작업이 끝나면 이어서 수집합니다" : "수집을 시작했습니다") : "이미 수집 중입니다");
+    wasRunning = true;
+    setTimeout(loadMeta, 800);
+  } catch (e) {
+    toast(e.message);
+  }
+});
+
+$("#exp-check-btn").addEventListener("click", async () => {
+  try {
+    const r = await api("/api/exposure/check", {});
+    toast(r.started ? (meta.running ? "지금 작업이 끝나면 이어서 확인합니다" : "상위노출 확인을 시작했습니다") : "이미 확인 중입니다");
     wasRunning = true;
     setTimeout(loadMeta, 800);
   } catch (e) {
@@ -348,6 +534,8 @@ function bindFilter(sel, key, isCheck) {
   bindFilter("#f-unanswered", "unanswered", true);
   bindFilter("#f-low", "low", true);
   bindFilter("#f-q", "q");
+  bindFilter("#x-unanswered", "expUnanswered", true);
+  if (!["feed", "exposure"].includes(state.view)) state.view = "feed";
   try {
     await loadMeta();
     if (state.product && !productById(state.product)) { state.product = ""; state.category = ""; renderTabs(); renderChips(); }
