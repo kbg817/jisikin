@@ -40,7 +40,12 @@ def run_diagnostics(
     items = []
     try:
         items = client.search_api(query, 5) if mode == "api" else client.search_web(query)
-        lines.append(f"[{'OK' if items else '??'}] '{query}' 검색 ({mode}): {len(items)}건")
+        where = mode
+        if mode == "api" and getattr(client, "api_provider", None):
+            from .naver import API_PROVIDER_NAMES
+
+            where = f"api · {API_PROVIDER_NAMES[client.api_provider]}"
+        lines.append(f"[{'OK' if items else '??'}] '{query}' 검색 ({where}): {len(items)}건")
         for it in items[:3]:
             lines.append(f"     · {it.title}  ({it.url})")
             if mode == "web":

@@ -182,16 +182,54 @@ class FakeSession:
         return self.response
 
 
-def test_search_api_sends_credentials_and_parses():
-    data = {"items": [{"title": "<b>건선</b> 질문", "link": "https://kin.naver.com/qna/detail.naver?d1id=7&dirId=1&docId=5", "description": "d"}]}
-    session = FakeSession(FakeResponse(json_data=data))
+API_DATA = {"items": [{"title": "<b>건선</b> 질문", "link": "https://kin.naver.com/qna/detail.naver?d1id=7&dirId=1&docId=5", "description": "d"}]}
+
+
+def test_search_api_hub_key():
+    """NAVER API HUB(네이버클라우드) 키: 새 주소 + X-NCP-APIGW 헤더로 먼저 시도한다."""
+    session = FakeSession(FakeResponse(json_data=API_DATA))
     client = NaverClient(credentials=("id", "secret"), session=session)
     items = client.search_api("건선", 150)
     assert items[0].title == "건선 질문"
     url, params, headers = session.calls[0]
-    assert url.endswith("/v1/search/kin.json")
-    assert params["display"] == 100 and params["sort"] == "date"
-    assert headers == {"X-Naver-Client-Id": "id", "X-Naver-Client-Secret": "secret"}
+    assert url == "https://naverapihub.apigw.ntruss.com/search/v1/kin"
+    assert params["display"] == 100 and params["sort"] == "date" and params["format"] == "json"
+    assert headers == {"X-NCP-APIGW-API-KEY-ID": "id", "X-NCP-APIGW-API-KEY": "secret"}
+    assert client.api_provider == "hub" and len(session.calls) == 1
+
+
+class RoutingSession(FakeSession):
+    """HUB 주소는 401, 개발자센터 주소는 200 (예전에 발급받은 키)."""
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        self.calls.append((url, params, headers))
+        if "ntruss" in url:
+            return FakeResponse(status=401, json_data={"error": {"errorCode": "200", "message": "Authentication Failed"}})
+        return FakeResponse(json_data=API_DATA)
+
+
+def test_search_api_falls_back_to_developers_key_and_remembers():
+    session = RoutingSession(None)
+    client = NaverClient(credentials=("old-id", "secret"), session=session)
+    assert client.search_api("건선")[0].title == "건선 질문"
+    assert [c[0] for c in session.calls] == [
+        "https://naverapihub.apigw.ntruss.com/search/v1/kin",
+        "https://openapi.naver.com/v1/search/kin.json",
+    ]
+    assert session.calls[1][2] == {"X-Naver-Client-Id": "old-id", "X-Naver-Client-Secret": "secret"}
+    # 다음부터는 성공한 곳으로 바로 (다른 클라이언트 객체여도)
+    session.calls.clear()
+    NaverClient(credentials=("old-id", "secret"), session=session).search_api("타로", sort="sim")
+    assert [c[0] for c in session.calls] == ["https://openapi.naver.com/v1/search/kin.json"]
+
+
+def test_search_api_wrong_key_message():
+    session = FakeSession(FakeResponse(status=401, json_data={"error": {"message": "Authentication Failed"}}))
+    with pytest.raises(NaverError) as ei:
+        NaverClient(credentials=("bad", "bad"), session=session).search_api("q")
+    assert ei.value.fatal and ei.value.auth
+    assert "NAVER API HUB" in str(ei.value) and "Authentication Failed" in str(ei.value)
+    assert len(session.calls) == 2  # 두 발급처 모두 시도
 
 
 @pytest.mark.parametrize("status, fatal", [(401, True), (429, True), (500, False)])

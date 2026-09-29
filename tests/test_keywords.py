@@ -94,7 +94,7 @@ def test_searchad_signs_request():
     rows = client.keyword_stats(["인천 건선", "건선"])
     assert rows == [{"keyword": "인천건선", "pc": 120, "mobile": 5}]
     url, params, headers = s.calls[0]
-    assert url == "https://api.naver.com/keywordstool"
+    assert url == "https://api.searchad.naver.com/keywordstool"
     assert params == {"hintKeywords": "인천건선,건선", "showDetail": "1"}  # 띄어쓰기 제거
     expected = base64.b64encode(
         hmac.new(b"SECRET", f"{headers['X-Timestamp']}.GET./keywordstool".encode(), hashlib.sha256).digest()

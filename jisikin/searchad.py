@@ -14,7 +14,7 @@ import requests
 
 from .naver import NaverError
 
-BASE_URL = "https://api.naver.com"
+BASE_URL = "https://api.searchad.naver.com"
 
 
 def _count(value) -> int | None:

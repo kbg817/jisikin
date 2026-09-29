@@ -33,7 +33,14 @@ MOBILE_USER_AGENT = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 "
     "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 )
+# 네이버 검색 API 는 두 곳에서 발급된다. 같은 Client ID/Secret 칸에 넣으면 어느 쪽 키인지 자동으로 알아낸다.
+#  - hub        : 네이버클라우드 NAVER API HUB (2026년부터 신규 발급은 여기서만 가능)
+#  - developers : 기존 네이버 개발자센터 (예전에 발급받은 키)
+HUB_API_URL = "https://naverapihub.apigw.ntruss.com/search/v1/kin"
 API_URL = "https://openapi.naver.com/v1/search/kin.json"
+API_PROVIDERS = ("hub", "developers")
+API_PROVIDER_NAMES = {"hub": "NAVER API HUB", "developers": "네이버 개발자센터"}
+_provider_cache: dict[str, str] = {}  # Client ID → 성공한 발급처 (매번 두 곳을 시도하지 않도록)
 WEB_SEARCH_URL = "https://kin.naver.com/search/list.naver"
 DETAIL_URL = "https://kin.naver.com/qna/detail.naver"
 INTEGRATED_PC_URL = "https://search.naver.com/search.naver"
@@ -47,9 +54,10 @@ _GENERIC_LINK_TEXT = {"답변하기", "답변", "질문", "더보기", "원문�
 class NaverError(Exception):
     """사용자에게 보여줄 수 있는 네이버 요청 오류."""
 
-    def __init__(self, message: str, fatal: bool = False):
+    def __init__(self, message: str, fatal: bool = False, auth: bool = False):
         super().__init__(message)
         self.fatal = fatal  # True 면 같은 방식의 남은 요청도 실패할 것 (예: 인증 오류)
+        self.auth = auth    # 키가 맞지 않아 실패 (다른 발급처 방식으로 다시 시도해 볼 만함)
 
 
 @dataclass
@@ -381,34 +389,57 @@ class NaverClient:
         self._lock = threading.Lock()
 
     # --- 공식 검색 API
+    @property
+    def api_provider(self) -> str | None:
+        """이 키가 어느 발급처 키인지 (한 번 성공한 뒤에만 알 수 있음)."""
+        return _provider_cache.get(self.credentials[0]) if self.credentials else None
+
     def search_api(self, query: str, count: int = 50, sort: str = "date") -> list[RawQuestion]:
         """sort: date(최신순) / sim(정확도순)"""
         if not self.credentials:
             raise NaverError("네이버 API 키가 없습니다. [설정] > API 키에 Client ID / Secret 을 넣어주세요.", fatal=True)
+        known = self.api_provider
+        providers = [known] if known else list(API_PROVIDERS)
+        auth_errors: list[NaverError] = []
+        for provider in providers:
+            try:
+                items = self._search_api_once(provider, query, count, sort)
+            except NaverError as e:
+                if e.auth and len(providers) > 1:
+                    auth_errors.append(e)
+                    continue
+                raise
+            _provider_cache[self.credentials[0]] = provider
+            return items
+        raise NaverError(
+            "네이버 API 인증 실패 — NAVER API HUB(네이버클라우드)에서 발급한 Client ID / Client Secret 인지, "
+            "Application 에 '검색' API 를 선택했는지 확인하세요. "
+            f"(자세히: {' / '.join(str(e) for e in auth_errors)})",
+            fatal=True,
+            auth=True,
+        )
+
+    def _search_api_once(self, provider: str, query: str, count: int, sort: str) -> list[RawQuestion]:
         cid, secret = self.credentials
+        name = API_PROVIDER_NAMES[provider]
         params = {"query": query, "display": max(1, min(count, 100)), "start": 1, "sort": sort}
+        if provider == "hub":
+            url = HUB_API_URL
+            params["format"] = "json"
+            headers = {"X-NCP-APIGW-API-KEY-ID": cid, "X-NCP-APIGW-API-KEY": secret}
+        else:
+            url = API_URL
+            headers = {"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": secret}
         try:
-            r = self.session.get(
-                API_URL,
-                params=params,
-                headers={"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": secret},
-                timeout=self.timeout,
-            )
+            r = self.session.get(url, params=params, headers=headers, timeout=self.timeout)
         except requests.RequestException as e:
             raise NaverError(f"네이버 API 연결 실패: {e.__class__.__name__}") from e
-        if r.status_code == 401:
-            raise NaverError("네이버 API 인증 실패 — Client ID/Secret 을 확인하세요.", fatal=True)
-        if r.status_code == 403:
-            raise NaverError("네이버 API 권한 없음 — 애플리케이션에 '검색' API 가 추가되어 있는지 확인하세요.", fatal=True)
+        if r.status_code in (401, 403):
+            raise NaverError(f"{name} {r.status_code} {_api_error_detail(r)}".strip(), fatal=True, auth=True)
         if r.status_code == 429:
             raise NaverError("네이버 API 하루 호출 한도를 초과했습니다.", fatal=True)
         if r.status_code != 200:
-            detail = ""
-            try:
-                detail = r.json().get("errorMessage", "")
-            except ValueError:
-                pass
-            raise NaverError(f"네이버 API 오류 {r.status_code} {detail}".strip())
+            raise NaverError(f"네이버 API 오류 {r.status_code} {_api_error_detail(r)}".strip())
         try:
             data = r.json()
         except ValueError as e:
@@ -480,6 +511,20 @@ class NaverClient:
         if not r.encoding or r.encoding.lower() == "iso-8859-1":
             r.encoding = r.apparent_encoding or "utf-8"
         return r.text
+
+
+def _api_error_detail(r) -> str:
+    """오류 응답에서 사람이 읽을 메시지만 뽑는다. (개발자센터: errorMessage / 네이버클라우드: error.message)"""
+    try:
+        data = r.json()
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    err = data.get("error")
+    if isinstance(err, dict):
+        return " ".join(str(err.get(k) or "") for k in ("message", "details")).strip()
+    return str(data.get("errorMessage") or data.get("message") or "")
 
 
 def parse_autocomplete(text: str) -> list[str]:
