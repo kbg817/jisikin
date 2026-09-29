@@ -12,19 +12,23 @@
   <h1><a href="/">답변·댓글 센터</a></h1>
   <div class="run-status" id="run-status">{% block status %}{% endblock %}</div>
   {% block actions %}{% endblock %}
-  {% if user.role == "admin" %}
-  <nav class="menu">
-    <a class="btn {% if request.endpoint == 'keywords_page' %}current{% endif %}" href="/keywords" title="지식iN 상위노출 글을 확인할 검색어">검색어 관리</a>
-    <a class="btn {% if request.endpoint == 'examples_page' %}current{% endif %}" href="/examples" title="AI 초안이 참고할 모범 답변">답변 예시</a>
-    <a class="btn {% if request.endpoint == 'settings' %}current{% endif %}" href="/settings">설정</a>
-  </nav>
-  {% endif %}
-  {% if auth_on and user.username %}
-  <form method="post" action="/logout" class="me">
-    <span title="{{ user.username }}">{{ user.name }}</span>
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="btn small" type="submit">로그아웃</button>
-  </form>
+  {% if user.role == "admin" or (auth_on and user.username) %}
+  <details class="menu" id="menu">
+    <summary class="btn">{% if auth_on and user.username %}{{ user.name }}{% else %}관리{% endif %} <span aria-hidden="true">▾</span></summary>
+    <div class="menu-pop">
+      {% if user.role == "admin" %}
+      <a class="{% if request.endpoint == 'keywords_page' %}current{% endif %}" href="/keywords"><b>검색어 관리</b><small>지식iN 상위노출 글을 확인할 검색어</small></a>
+      <a class="{% if request.endpoint == 'examples_page' %}current{% endif %}" href="/examples"><b>답변 예시</b><small>AI 초안이 참고할 모범 답변</small></a>
+      <a class="{% if request.endpoint == 'settings' %}current{% endif %}" href="/settings"><b>설정</b><small>API 키 · 직원 계정 · 검색어</small></a>
+      {% endif %}
+      {% if auth_on and user.username %}
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button type="submit">로그아웃 <small>{{ user.username }}</small></button>
+      </form>
+      {% endif %}
+    </div>
+  </details>
   {% endif %}
 </header>
 {% block body %}{% endblock %}
