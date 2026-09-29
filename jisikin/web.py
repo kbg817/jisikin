@@ -28,6 +28,7 @@ from .matcher import Matcher
 from .migrations import migrate_config
 from .searchad import compact
 from .social import PLATFORMS, YouTubeBudget, collect_social, social_matcher, social_status
+from .tracker import check_answers
 from .storage import STATUSES, TODO_STATUSES, ApiBudget, Store, from_iso, iso, now_kst
 
 API_DAILY_LIMIT = 25000
@@ -49,11 +50,13 @@ class AppState:
         self.next_run_at: datetime | None = None
         self.next_exposure_at: datetime | None = None
         self.next_social_at: datetime | None = None
+        self.next_track_at: datetime | None = None
         self._run_lock = threading.Lock()
         self._wake = threading.Event()
         self._force = False
         self._force_exposure = False
         self._force_social = False
+        self._force_track = False
         self._pending_keywords: list[str] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -116,6 +119,24 @@ class AppState:
             lambda: collect_social(self.cfg, self.store, log=self.log, save_threads_token=self._save_threads_token),
         )
 
+    def run_track(self):
+        return self._run("track", "작업 결과 확인", lambda: check_answers(self.cfg, self.store, log=self.log))
+
+    def next_track_time(self, now: datetime | None = None) -> datetime | None:
+        """다음 확인 시각: 매일 track_check_hour 시. 오늘 그 시각이 지났는데 아직 안 했으면 지금."""
+        hour = self.cfg.settings.track_check_hour
+        if hour < 0:
+            return None
+        now = now or now_kst()
+        today = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        runs = self.store.recent_runs(1, mode="track")
+        last = from_iso(runs[0]["started_at"]) if runs else None
+        if now < today:
+            return today
+        if last is None or last < today:
+            return now
+        return today + timedelta(days=1)
+
     def _save_threads_token(self, token: str) -> None:
         config_mod.save_env_values({"THREADS_ACCESS_TOKEN": token}, self.env_path)
 
@@ -144,6 +165,8 @@ class AppState:
                 self._force_exposure = True
             elif kind == "social":
                 self._force_social = True
+            elif kind == "track":
+                self._force_track = True
             else:
                 self._force = True
             self._wake.set()
@@ -153,7 +176,7 @@ class AppState:
         if kind == "keywords":
             target, args = self.run_keywords, (product,)
         else:
-            runners = {"exposure": self.run_exposure, "social": self.run_social}
+            runners = {"exposure": self.run_exposure, "social": self.run_social, "track": self.run_track}
             target, args = runners.get(kind, self.run_collection), ()
         threading.Thread(target=target, args=args, daemon=True).start()
         return True
@@ -173,7 +196,7 @@ class AppState:
             except Exception:
                 self.log("스케줄러 오류:\n" + traceback.format_exc())
             wait = 60.0
-            for t in (self.next_run_at, self.next_exposure_at, self.next_social_at):
+            for t in (self.next_run_at, self.next_exposure_at, self.next_social_at, self.next_track_at):
                 if t:
                     wait = min(wait, (t - now_kst()).total_seconds())
             self._wake.wait(timeout=max(1.0, wait))
@@ -232,6 +255,13 @@ class AppState:
             self.next_social_at = None
         elif self.next_social_at > now + timedelta(hours=hours):
             self.next_social_at = now + timedelta(hours=hours)
+
+        # 5) 작업 결과 (매일 한 번)
+        self.next_track_at = self.next_track_time()
+        if self._force_track or (self.next_track_at and now_kst() >= self.next_track_at):
+            self._force_track = False
+            self.run_track()
+            self.next_track_at = self.next_track_time()
 
 
 def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
@@ -369,6 +399,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         runs = state.store.recent_runs(1, exclude_mode=("exposure", "social"))
         social_runs = state.store.recent_runs(1, mode="social")
         exp_runs = state.store.recent_runs(1, mode="exposure")
+        track_runs = state.store.recent_runs(1, mode="track")
         names = people()
         stats = state.store.answer_stats()
         return jsonify(
@@ -387,6 +418,12 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             answer_stats=[
                 {"username": u, "name": names.get(u, u), **s} for u, s in sorted(stats.items(), key=lambda kv: -kv[1]["today"])
             ],
+            track={
+                "hour": cfg.settings.track_check_hour,
+                "next_at": iso(state.next_track_at or state.next_track_time()),
+                "last_run": track_runs[0] if track_runs else None,
+                "youtube": bool(social_status().get("youtube")),
+            },
             exposure={
                 "keywords": len(state.exposure_targets()),
                 "interval_hours": state.exposure_interval_hours(),
@@ -602,6 +639,36 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         if not state.store.save_social_draft_edit(post_id, text):
             return jsonify(error="글을 찾을 수 없습니다"), 404
         return jsonify(ok=True)
+
+    @app.get("/api/results")
+    def api_results():
+        """작업 결과: 완료한 글 + 마지막 확인 결과 (+ 지식iN 은 지금 상위노출 순위)."""
+        checks = state.store.latest_answer_checks()
+        exposed: dict[str, dict] = {}
+        for grp in state.store.latest_exposures():
+            for p in grp["posts"]:
+                cur = exposed.get(p["doc_id"])
+                if p.get("best_rank") is not None and (cur is None or p["best_rank"] < cur["rank"]):
+                    exposed[p["doc_id"]] = {"keyword": grp["keyword"], "rank": p["best_rank"]}
+        items = []
+        for r in state.store.answered_items():
+            if r["platform"] == "threads":
+                body = (r.get("body") or "").strip()
+                r["title"] = body.split("\n", 1)[0][:90] or "(내용 없음)"
+            item = {k: r.get(k) for k in (
+                "item_id platform url title product draft status_by status_changed_at thumbnail is_short views comments"
+            ).split()}
+            item["check"] = checks.get(r["item_id"])
+            item["exposure"] = exposed.get(r["item_id"])
+            items.append(item)
+        return jsonify(items=items)
+
+    @app.post("/api/results/check")
+    def api_results_check():
+        require_api_header()
+        if state.cfg.settings.track_check_hour < 0:
+            return jsonify(error="작업 결과 확인이 꺼져 있습니다 (설정의 track_check_hour)"), 400
+        return jsonify(started=state.trigger("track"))
 
     @app.post("/api/social/collect")
     def api_social_collect():

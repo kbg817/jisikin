@@ -24,6 +24,8 @@ from .storage import Store, iso, now_kst
 PLATFORMS = {"youtube": "유튜브", "threads": "쓰레드"}
 
 YT_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+YT_COMMENTS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
+YT_COMMENTS_UNITS = 1      # commentThreads.list 1회 사용량
 YT_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 YT_SEARCH_UNITS = 100      # search.list 1회 사용량
 YT_VIDEOS_UNITS = 1        # videos.list 1회 사용량
@@ -41,9 +43,10 @@ MAX_FAILS = 3              # 한 곳에서 검색이 연속으로 이만큼 실�
 
 
 class SocialError(Exception):
-    def __init__(self, message: str, fatal: bool = False):
+    def __init__(self, message: str, fatal: bool = False, reason: str = ""):
         super().__init__(message)
         self.fatal = fatal  # True 면 남은 검색도 같은 이유로 실패할 것 (키 오류, 할당량 소진 등)
+        self.reason = reason  # 유튜브 API 오류 이유 (commentsDisabled, videoNotFound 등)
 
 
 @dataclass
@@ -182,7 +185,7 @@ class YouTubeClient:
                 "키에 API 제한을 걸었다면 이 API 가 허용되어 있는지 확인하세요.",
                 fatal=True,
             )
-        raise SocialError(f"유튜브 API 오류 ({res.status_code}): {msg}")
+        raise SocialError(f"유튜브 API 오류 ({res.status_code}): {msg}", reason=reason)
 
     def search(self, query: str, since: datetime, limit: int) -> list[SocialPost]:
         data = self._get(
@@ -236,6 +239,24 @@ class YouTubeClient:
             p.is_short = self._is_short(v.get("id"), p.duration)
             if p.is_short:
                 p.url = YT_SHORTS_URL.format(v.get("id"))  # 숏츠 화면으로 열어야 댓글 달기 편함
+
+    def top_comments(self, video_id: str, search: str = "") -> list[dict]:
+        """영상의 공개 댓글 (인기순 최대 100개). search 가 있으면 그 글자가 들어간 댓글만.
+        API 키로는 다른 사람에게 보이는 댓글만 나오므로, 삭제·스팸 처리된 댓글은 여기 없다."""
+        params = {"part": "snippet", "videoId": video_id, "order": "relevance", "maxResults": 100, "textFormat": "plainText"}
+        if search:
+            params["searchTerms"] = search
+        data = self._get(YT_COMMENTS_URL, params, YT_COMMENTS_UNITS)
+        out = []
+        for it in data.get("items") or []:
+            sn = ((it.get("snippet") or {}).get("topLevelComment") or {}).get("snippet") or {}
+            out.append({
+                "text": html.unescape(sn.get("textOriginal") or sn.get("textDisplay") or ""),
+                "author": sn.get("authorDisplayName") or "",
+                "likes": _int(sn.get("likeCount")),
+                "replies": _int((it.get("snippet") or {}).get("totalReplyCount")),
+            })
+        return out
 
     def _is_short(self, vid: str, seconds: int | None) -> bool | None:
         """API 에는 숏츠 표시가 없어서, 3분 이하 영상만 youtube.com/shorts/<id> 로 확인한다.

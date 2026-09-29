@@ -6,6 +6,7 @@
     <button class="view active" data-group="kin"><span class="pf kin">N</span>지식iN <span class="cnt" id="cnt-kin"></span></button>
     <button class="view" data-group="youtube"><span class="pf yt">▶</span>유튜브 <span class="cnt" id="cnt-youtube"></span></button>
     <button class="view" data-group="threads"><span class="pf th">@</span>쓰레드 <span class="cnt" id="cnt-threads"></span></button>
+    <button class="view results-tab" data-group="results"><span class="pf rs">✓</span>작업 결과 <span class="cnt warn" id="cnt-results"></span></button>
   </nav>
   <nav class="subviews" id="subviews">
     <button class="subview active" data-view="feed">새 질문 <span class="muted">실시간으로 올라온 질문</span></button>
@@ -37,6 +38,24 @@
     <label title="제품 키워드 점수가 min_score 미만인 글도 표시 (검색어 튜닝용)"><input type="checkbox" id="s-low"> 관련도 낮은 글도</label>
     <input type="search" id="s-q" placeholder="제목·내용·작성자 검색">
     <button class="btn primary small" id="social-collect-btn" type="button">지금 찾기</button>
+  </div>
+
+  <div class="toolbar" id="results-toolbar" hidden>
+    <span class="exp-status" id="results-status"></span>
+    <select id="r-platform" title="어디에 단 답변·댓글">
+      <option value="">지식iN + 유튜브 + 쓰레드</option>
+      <option value="kin">지식iN</option>
+      <option value="youtube">유튜브</option>
+      <option value="threads">쓰레드</option>
+    </select>
+    <select id="r-state" title="확인 결과">
+      <option value="">모든 결과</option>
+      <option value="visible">✅ 노출 중</option>
+      <option value="problem">⚠️ 안 보임·삭제</option>
+      <option value="unknown">확인 전·확인 불가</option>
+    </select>
+    <select id="r-by" title="작업한 사람" hidden></select>
+    <button class="btn primary small" id="results-check-btn" type="button">지금 확인</button>
   </div>
 
   <div class="toolbar" id="feed-toolbar">
