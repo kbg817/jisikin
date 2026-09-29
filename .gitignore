@@ -1,0 +1,12 @@
+# 개인 설정 / 비밀값 / 수집 데이터
+.env
+config.yaml
+config.yaml.tmp
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/

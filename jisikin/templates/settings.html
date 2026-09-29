@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>설정 - 지식iN 질문 수집기</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2303c75a'/%3E%3Ctext x='16' y='23' font-size='20' font-family='Arial' font-weight='700' fill='white' text-anchor='middle'%3EQ%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="top">
+  <h1><a href="/">지식iN 질문 수집기</a></h1>
+  <div class="run-status">설정</div>
+  <a class="btn" href="/">← 질문 목록</a>
+</header>
+
+<div class="wrap">
+  <div class="grid">
+    <form method="post" class="panel">
+      <h2>키워드 · 카테고리 설정 (config.yaml)</h2>
+      {% if error %}<div class="error"><b>저장하지 못했습니다.</b> {{ error }}</div>{% endif %}
+      {% if saved %}<div class="ok">저장했습니다. 저장된 질문도 새 설정으로 다시 분류했습니다.</div>{% endif %}
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <textarea class="config" name="config" spellcheck="false">{{ config_text }}</textarea>
+      <p class="muted" style="font-size:13px">
+        들여쓰기(스페이스)가 중요합니다. 파일 안의 설명(# 주석)을 참고하세요.
+        저장하면 형식을 검사한 뒤 반영하고, 문제가 있으면 저장하지 않습니다.
+      </p>
+      <button class="btn primary" type="submit">저장</button>
+    </form>
+
+    <aside>
+      <div class="panel">
+        <h2>연결 상태</h2>
+        <dl>
+          <dt>수집 방식</dt>
+          <dd>{{ "네이버 검색 API" if mode == "api" else "웹 검색 모드" }} <span class="muted">(source: {{ source }})</span></dd>
+          <dt>네이버 API 키</dt>
+          <dd class="{{ 'ok-dot' if has_naver_keys else 'no-dot' }}">{{ "있음" if has_naver_keys else "없음" }}</dd>
+          <dt>자동 수집</dt>
+          <dd>{{ (interval ~ "분마다") if interval else "꺼짐" }}</dd>
+          <dt>검색어 수</dt>
+          <dd>{{ query_count }}개</dd>
+          {% if mode == "api" %}
+          <dt>API 호출</dt>
+          <dd>하루 약 {{ "{:,}".format(api_calls) }}회 / 한도 {{ "{:,}".format(api_limit) }}
+            {% if api_calls > api_limit * 0.8 %}<br><b style="color:#dc2626">한도에 가깝습니다. 간격을 늘리거나 검색어를 줄이세요.</b>{% endif %}
+          </dd>
+          {% endif %}
+          <dt>AI 초안</dt>
+          <dd class="{{ 'ok-dot' if ai_ok else 'no-dot' }}">{{ ai_reason }}</dd>
+        </dl>
+        {% if not has_naver_keys %}
+        <p style="font-size:13px">
+          <b>네이버 API 키 발급 (무료, 5분)</b><br>
+          1) <a href="https://developers.naver.com/apps/#/register" target="_blank" rel="noopener">developers.naver.com</a> 에서 애플리케이션 등록<br>
+          2) 사용 API 에 <b>검색</b> 선택, 환경은 WEB 설정(http://127.0.0.1) 추가<br>
+          3) 발급된 Client ID / Secret 을 프로그램 폴더의 <code>.env</code> 파일에 저장 후 재시작
+        </p>
+        {% endif %}
+      </div>
+
+      <div class="panel test">
+        <h2>분류 테스트</h2>
+        <p class="muted" style="font-size:13px;margin-top:0">질문 예시를 넣어 어떤 제품·카테고리로 잡히는지 확인하세요. (저장된 설정 기준)</p>
+        <input id="t-title" placeholder="질문 제목">
+        <textarea id="t-body" rows="3" placeholder="질문 본문 (선택)"></textarea>
+        <button class="btn" id="t-run" type="button">테스트</button>
+        <div class="test-result" id="t-result"></div>
+      </div>
+
+      <div class="panel">
+        <h2>최근 수집 기록</h2>
+        <table class="runs">
+          <tr><th>시작</th><th>새 질문</th><th>관련</th><th>상세</th></tr>
+          {% for r in runs %}
+          <tr>
+            <td>{{ r.started_at[5:16].replace("T", " ") }}</td>
+            <td>{{ r.new_total }}</td>
+            <td>{{ r.new_relevant }}</td>
+            <td>{{ r.details }}</td>
+          </tr>
+          {% if r.errors %}<tr><td colspan="4" class="err">{{ r.errors[:3] | join(" / ") }}</td></tr>{% endif %}
+          {% else %}
+          <tr><td colspan="4" class="muted">기록 없음</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+document.getElementById("t-run").addEventListener("click", async () => {
+  const out = document.getElementById("t-result");
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const res = await fetch("/api/classify-test", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-Jisikin": "1"},
+    body: JSON.stringify({title: document.getElementById("t-title").value, body: document.getElementById("t-body").value}),
+  });
+  const data = await res.json();
+  if (!data.matches.length) { out.innerHTML = "어느 제품과도 매칭되지 않았습니다."; return; }
+  out.innerHTML = data.matches.map((m) => `
+    <div style="margin-bottom:6px">
+      <b>${esc(m.product_name)}</b> — 점수 ${m.score} ${m.relevant ? "✅ 수집됨" : "⚠️ 점수 부족 (min_score 미만)"}<br>
+      <span class="muted">키워드: ${esc(m.keywords.join(", ") || "-")} / 카테고리: ${esc(m.categories.join(", ") || "-")}</span>
+    </div>`).join("");
+});
+</script>
+</body>
+</html>

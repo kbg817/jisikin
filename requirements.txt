@@ -1,0 +1,6 @@
+requests>=2.31
+beautifulsoup4>=4.12
+PyYAML>=6.0
+Flask>=3.0
+# AI 답변 초안 기능 (선택)
+anthropic>=1.9

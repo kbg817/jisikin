@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>지식iN 질문 수집기</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2303c75a'/%3E%3Ctext x='16' y='23' font-size='20' font-family='Arial' font-weight='700' fill='white' text-anchor='middle'%3EQ%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="top">
+  <h1><a href="/">지식iN 질문 수집기</a></h1>
+  <div class="run-status" id="run-status">불러오는 중…</div>
+  <button class="btn primary" id="collect-btn">지금 수집</button>
+  <a class="btn" href="/settings">설정</a>
+</header>
+
+<div class="wrap">
+  <nav class="tabs" id="tabs"></nav>
+  <div class="chips" id="chips"></div>
+
+  <div class="toolbar">
+    <select id="f-status" title="상태">
+      <option value="todo">할 일</option>
+      <option value="answered">답변완료</option>
+      <option value="skipped">제외함</option>
+      <option value="all">전체</option>
+    </select>
+    <select id="f-sort" title="정렬">
+      <option value="priority">추천순</option>
+      <option value="latest">최신순</option>
+    </select>
+    <label title="답변이 아직 없는 질문(답변 수를 모르는 질문 포함)"><input type="checkbox" id="f-unanswered"> 답변 없는 질문만</label>
+    <label title="점수가 min_score 미만인 질문도 표시 (키워드 튜닝용)"><input type="checkbox" id="f-low"> 관련도 낮은 질문도</label>
+    <input type="search" id="f-q" placeholder="제목·본문 검색">
+  </div>
+
+  <div id="notice"></div>
+  <main id="list"></main>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
