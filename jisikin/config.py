@@ -115,10 +115,15 @@ class Settings:
     exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin"])
     # 유튜브 · 쓰레드
     social_interval_hours: int = 6       # 자동 수집 주기(시간). 0 이면 끔
-    social_max_age_days: int = 14        # 이보다 오래된 영상·글은 찾지 않고 할 일에서도 숨김
+    social_max_age_days: int = 14        # (쓰레드) 이보다 오래된 글은 찾지 않고 할 일에서도 숨김
+    youtube_max_age_days: int = 180      # (유튜브) 이보다 오래된 영상은 찾지 않음. 인기 영상은 오래 추천되므로 길게
+    youtube_order: str = "relevance"     # 유튜브 검색 순서: relevance(유튜브 검색 결과 순 = 사람들이 보는 순), viewCount, date
     youtube_results: int = 25            # 검색어당 영상 수 (최대 50)
     youtube_daily_units: int = 9000      # 유튜브 API 하루 사용량 상한 (무료 10,000). 검색 1번 ≈ 101
     threads_results: int = 50            # 검색어당 쓰레드 글 수 (최대 100)
+
+    def social_age_days(self, platform: str) -> int:
+        return self.youtube_max_age_days if platform == "youtube" else self.social_max_age_days
 
 
 @dataclass
@@ -235,6 +240,9 @@ def parse_config(text: str) -> AppConfig:
     settings.exposure_top_n = max(1, min(settings.exposure_top_n, 20))
     settings.social_interval_hours = max(0, settings.social_interval_hours)
     settings.social_max_age_days = max(1, min(settings.social_max_age_days, 365))
+    settings.youtube_max_age_days = max(1, min(settings.youtube_max_age_days, 3650))
+    if settings.youtube_order not in ("relevance", "viewCount", "date"):
+        raise ConfigError("settings.youtube_order 는 relevance, viewCount, date 중 하나여야 합니다.")
     settings.youtube_results = max(1, min(settings.youtube_results, 50))
     settings.youtube_daily_units = max(0, settings.youtube_daily_units)
     settings.threads_results = max(1, min(settings.threads_results, 100))

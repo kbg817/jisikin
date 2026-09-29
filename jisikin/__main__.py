@@ -72,9 +72,9 @@ def cmd_serve(args) -> int:
         print(f"포트 {port} 가 이미 사용 중입니다. 이미 실행 중이 아닌지 확인하거나 config.yaml 의 port 를 바꾸세요.")
         return 1
     if public:
-        print(f"\n  지식iN 질문 수집기 서버 실행 중 ({host}:{port}) — 로그인 필요\n", flush=True)
+        print(f"\n  답변·댓글 센터 서버 실행 중 ({host}:{port}) — 로그인 필요\n", flush=True)
     else:
-        print(f"\n  지식iN 질문 수집기 대시보드: {url}\n  (종료: Ctrl+C)\n", flush=True)
+        print(f"\n  답변·댓글 센터 대시보드: {url}\n  (종료: Ctrl+C)\n", flush=True)
     if not args.no_collect:
         state.start_scheduler()
     if not args.no_browser and not public:
@@ -132,7 +132,7 @@ def cmd_classify(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     _utf8_console()
     config_mod.load_env()
-    parser = argparse.ArgumentParser(prog="python -m jisikin", description="네이버 지식iN 질문 수집기")
+    parser = argparse.ArgumentParser(prog="python -m jisikin", description="답변·댓글 센터 (지식iN · 유튜브 · 쓰레드)")
     sub = parser.add_subparsers(dest="cmd")
 
     p = sub.add_parser("serve", help="대시보드 실행 (기본)")

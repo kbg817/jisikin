@@ -1,13 +1,15 @@
 {% extends "base.html" %}
 {% block status %}불러오는 중…{% endblock %}
-{% block actions %}<button class="btn primary" id="collect-btn">지금 수집</button>{% endblock %}
 {% block body %}
 <div class="wrap">
   <nav class="views" id="views">
-    <button class="view active" data-view="feed">새 질문 <span class="muted">실시간</span></button>
-    <button class="view" data-view="exposure">상위노출 글 <span class="muted">검색 상위에 뜨는 글</span></button>
-    <button class="view" data-view="youtube">유튜브 <span class="muted">영상</span></button>
-    <button class="view" data-view="threads">쓰레드 <span class="muted">글</span></button>
+    <button class="view active" data-group="kin"><span class="pf kin">N</span>지식iN <span class="cnt" id="cnt-kin"></span></button>
+    <button class="view" data-group="youtube"><span class="pf yt">▶</span>유튜브 <span class="cnt" id="cnt-youtube"></span></button>
+    <button class="view" data-group="threads"><span class="pf th">@</span>쓰레드 <span class="cnt" id="cnt-threads"></span></button>
+  </nav>
+  <nav class="subviews" id="subviews">
+    <button class="subview active" data-view="feed">새 질문 <span class="muted">실시간으로 올라온 질문</span></button>
+    <button class="subview" data-view="exposure">상위노출 글 <span class="muted">검색 상위에 뜨는 글</span></button>
   </nav>
   <nav class="tabs" id="tabs"></nav>
   <div class="chips" id="chips"></div>
@@ -26,17 +28,14 @@
       <option value="skipped">제외함</option>
       <option value="all">전체</option>
     </select>
-    <select id="s-sort" title="정렬">
-      <option value="priority">추천순</option>
-      <option value="latest">최신순</option>
-      <option value="views">조회수순</option>
-    </select>
+    <select id="s-sort" title="정렬"></select>
     <label title="제품 키워드 점수가 min_score 미만인 글도 표시 (검색어 튜닝용)"><input type="checkbox" id="s-low"> 관련도 낮은 글도</label>
     <input type="search" id="s-q" placeholder="제목·내용·작성자 검색">
     <button class="btn primary small" id="social-collect-btn" type="button">지금 찾기</button>
   </div>
 
   <div class="toolbar" id="feed-toolbar">
+    <span class="exp-status" id="feed-status"></span>
     <select id="f-status" title="상태">
       <option value="todo">할 일</option>
       <option value="answered">답변완료</option>
@@ -50,6 +49,7 @@
     <label title="답변이 아직 없는 질문(답변 수를 모르는 질문 포함)"><input type="checkbox" id="f-unanswered"> 답변 없는 질문만</label>
     <label title="점수가 min_score 미만인 질문도 표시 (키워드 튜닝용)"><input type="checkbox" id="f-low"> 관련도 낮은 질문도</label>
     <input type="search" id="f-q" placeholder="제목·본문 검색">
+    <button class="btn primary small" id="collect-btn" type="button">지금 수집</button>
   </div>
 
   <div id="notice"></div>
