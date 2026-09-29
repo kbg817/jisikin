@@ -98,12 +98,38 @@ function num(n) {
 }
 
 let toastTimer = null;
-function toast(msg) {
+let toastUndo = null;
+// undo 를 주면 [되돌리기] 버튼이 붙고 조금 더 오래 보인다 (실수로 누른 완료·건너뛰기를 바로 되돌릴 수 있게)
+function toast(msg, undo) {
   const el = $("#toast");
-  el.textContent = msg;
+  el.querySelector(".msg").textContent = msg;
+  const btn = el.querySelector(".undo");
+  toastUndo = undo || null;
+  btn.hidden = !undo;
   el.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
+  toastTimer = setTimeout(() => { el.classList.remove("show"); toastUndo = null; }, undo ? 6000 : 2500);
+}
+$("#toast .undo").addEventListener("click", async () => {
+  const fn = toastUndo;
+  toastUndo = null;
+  $("#toast").classList.remove("show");
+  if (fn) {
+    try { await fn(); } catch (e) { toast(e.message); }
+  }
+});
+
+// 안내 상자 닫기 (브라우저에 기억)
+const DISMISS_KEY = "jisikin.dismissed";
+function dismissed(id) {
+  try { return (JSON.parse(localStorage.getItem(DISMISS_KEY) || "[]")).includes(id); } catch (e) { return false; }
+}
+function dismiss(id) {
+  try {
+    const list = JSON.parse(localStorage.getItem(DISMISS_KEY) || "[]");
+    if (!list.includes(id)) list.push(id);
+    localStorage.setItem(DISMISS_KEY, JSON.stringify(list));
+  } catch (e) { /* 무시 */ }
 }
 
 function productById(id) {
@@ -161,33 +187,38 @@ function renderGroupCounts() {
   $("#cnt-results").title = bad ? `안 보이는 답변·댓글 ${bad}개` : "";
 }
 
+function myToday() {
+  const me = meta.auth ? meta.user.username : "";
+  return (meta.answer_stats.find((s) => s.username === me) || {}).today || 0;
+}
+
 function renderStatus() {
-  // 상단: 오늘 실적 (지식iN 답변 + 유튜브·쓰레드 댓글)
-  const head = [];
-  if (meta.running) {
-    const label = { exposure: "상위노출 확인 중…", social: "유튜브·쓰레드 찾는 중…", keywords: "검색어 만드는 중…" }[meta.running_kind] || "지식iN 수집 중…";
-    head.push(`<b>${label}</b>`);
-  }
+  // 상단: 오늘 완료한 답변·댓글 (내가 얼마나 했는지 한눈에)
   const today = meta.answer_stats.reduce((a, s) => a + s.today, 0);
-  const who = meta.auth ? meta.answer_stats.filter((s) => s.today).map((s) => `${esc(s.name)} ${s.today}`).join(", ") : "";
-  head.push(`오늘 답변·댓글 <b>${today}</b>건${who ? ` (${who})` : ""}`);
-  $("#run-status").innerHTML = head.join(" · ");
+  const people = meta.auth ? meta.answer_stats.filter((s) => s.today) : [];
+  const who = people.map((s) => `${esc(s.name)} <b>${s.today}</b>`).join(" · ");
+  const week = meta.answer_stats.reduce((a, s) => a + (s.week || 0), 0);
+  $("#run-status").innerHTML =
+    `<span class="today" title="지식iN 답변 + 유튜브·쓰레드 댓글 · 이번 주 ${week}건">✓ 오늘 완료 <b>${today}</b>건</span>`
+    + (who ? `<span class="who">${who}</span>` : "");
 
   // 새 질문 도구줄: 지식iN 수집 상태
   const r = meta.last_run;
   const parts = [];
-  parts.push(meta.mode === "api" ? "네이버 검색 API" : "웹 검색 모드");
-  if (meta.running && meta.running_kind === "collect") parts.push("<b>수집 중…</b>");
-  else if (r) {
-    parts.push(`마지막 수집 ${relTime(r.finished_at || r.started_at)} · 새 관련 질문 ${r.new_relevant}건`);
-  } else parts.push("아직 수집 기록이 없습니다");
-  if (!meta.running && meta.next_run_at) parts.push(`다음 수집 ${untilTime(meta.next_run_at)}`);
-  if (!meta.interval) parts.push("자동 수집 꺼짐");
+  if (meta.running && meta.running_kind === "collect") parts.push("<b>새 질문 찾는 중…</b>");
+  else if (r) parts.push(`${relTime(r.finished_at || r.started_at)} 새로 찾음 · 새 질문 ${r.new_relevant}건`);
+  else parts.push("아직 찾아본 적이 없어요");
+  if (!meta.interval) parts.push("자동으로 찾기 꺼짐");
+  else if (!meta.running && meta.next_run_at) parts.push(`다음 ${untilTime(meta.next_run_at)}`);
+  if (meta.running && meta.running_kind !== "collect") {
+    const label = { exposure: "상위노출 확인 중", social: "유튜브·쓰레드 찾는 중", keywords: "검색어 만드는 중", track: "작업 결과 확인 중" }[meta.running_kind];
+    if (label) parts.push(`<span class="muted">(${label}…)</span>`);
+  }
   $("#feed-status").innerHTML = parts.join(" · ");
   const btn = $("#collect-btn");
   const collecting = meta.running && meta.running_kind === "collect";
   btn.disabled = collecting;
-  btn.textContent = collecting ? "수집 중…" : "지금 수집";
+  btn.textContent = collecting ? "찾는 중…" : "지금 찾기";
 }
 
 function renderExposureBar() {
@@ -195,7 +226,7 @@ function renderExposureBar() {
   const parts = [];
   if (meta.running && meta.running_kind === "exposure") parts.push("<b>확인 중…</b> (검색어가 많으면 몇 분 걸립니다)");
   else if (x.last_run) parts.push(`마지막 확인 ${relTime(x.last_run.finished_at || x.last_run.started_at)}`);
-  else parts.push("아직 확인 기록이 없습니다");
+  else parts.push("아직 확인해 본 적이 없어요");
   if (x.interval_hours) parts.push(`${x.interval_hours}시간마다 자동 확인${x.next_at && !meta.running ? ` (다음 ${untilTime(x.next_at)})` : ""}`);
   parts.push(`검색어 ${x.keywords}개`);
   $("#exp-status").innerHTML = parts.join(" · ");
@@ -210,8 +241,8 @@ function renderSocialBar() {
   const parts = [];
   const on = x.platforms[state.view];
   if (meta.running && meta.running_kind === "social") parts.push("<b>찾는 중…</b>");
-  else if (x.last_run) parts.push(`마지막 ${relTime(x.last_run.finished_at || x.last_run.started_at)}`);
-  else parts.push("아직 찾은 기록이 없습니다");
+  else if (x.last_run) parts.push(`${relTime(x.last_run.finished_at || x.last_run.started_at)} 새로 찾음`);
+  else parts.push("아직 찾아본 적이 없어요");
   if (x.interval_hours) parts.push(`${x.interval_hours}시간마다 자동${x.next_at && !meta.running ? ` (다음 ${untilTime(x.next_at)})` : ""}`);
   parts.push(`검색어 ${x.queries}개`);
   $("#social-status").innerHTML = parts.join(" · ");
@@ -274,7 +305,21 @@ function resultCounts() {
   return counts;
 }
 
+// [할 일 N] 숫자: 지금 고른 제품 기준
+function renderSegCounts() {
+  const pick = (counts) => {
+    if (!counts) return 0;
+    if (state.product) return counts[state.product]?.total || 0;
+    return Object.values(counts).reduce((a, p) => a + p.total, 0);
+  };
+  const f = pick(meta.counts.products);
+  $("#f-status [data-count]").textContent = f ? num(f) : "";
+  const sc = isSocial() ? pick(meta.social.counts[state.view]) : 0;
+  $("#s-status [data-count]").textContent = sc ? num(sc) : "";
+}
+
 function renderTabs() {
+  if (meta) renderSegCounts();
   const counts = state.view === "results" ? resultCounts() : state.view === "exposure" ? exposureCounts() : isSocial() ? (meta.social.counts[state.view] || {}) : meta.counts.products;
   const all = Object.values(counts).reduce((a, p) => ({ total: a.total + p.total, new: a.new + p.new }), { total: 0, new: 0 });
   const tabs = [{ id: "", name: "전체", color: "", c: all }]
@@ -282,7 +327,7 @@ function renderTabs() {
   $("#tabs").innerHTML = tabs.map((t) => `
     <button class="tab ${state.product === t.id ? "active" : ""}" data-product="${esc(t.id)}" style="${t.color ? `--c:${esc(t.color)}` : ""}">
       ${t.color ? '<span class="dot"></span>' : ""}${esc(t.name)}
-      <span class="n">${t.c.total}</span>${t.c.new ? `<span class="new">${t.c.new}</span>` : ""}
+      <span class="n">${t.c.total}</span>${t.c.new ? `<span class="new ${state.view === "results" ? "warn" : ""}">${t.c.new}</span>` : ""}
     </button>`).join("");
 }
 
@@ -307,8 +352,9 @@ function renderNotice() {
   if (r && r.errors && r.errors.length) {
     notes.push(`<b>마지막 ${what}에서 오류 ${r.errors.length}건</b><ul>${r.errors.slice(0, 5).map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`);
   }
-  if (meta.mode === "web" && state.view === "feed") {
-    notes.push("네이버 검색 API 키가 없어 <b>웹 검색 모드</b>로 동작 중입니다. 더 빠르고 안정적으로 수집하려면 <a href='/settings'>설정</a>에서 네이버 API 키를 붙여넣으세요. (발급 방법도 거기 있어요)");
+  if (meta.mode === "web" && state.view === "feed" && meta.user.role === "admin" && !dismissed("webmode")) {
+    notes.push(`<button class="close" data-dismiss="webmode" title="닫기" aria-label="닫기">×</button>`
+      + "네이버 검색 API 키가 없어 <b>웹 검색 모드</b>로 찾고 있어요. 키를 넣으면 더 빠르고 안정적입니다 → <a href='/settings'>설정</a>");
   }
   $("#notice").innerHTML = notes.map((n) => `<div class="notice">${n}</div>`).join("");
 }
@@ -455,7 +501,9 @@ async function loadList() {
 function renderList(items) {
   const list = $("#list");
   if (!items.length) {
-    list.innerHTML = `<div class="empty">${state.status === "todo" ? "처리할 질문이 없습니다." : "질문이 없습니다."}<br><span class="muted">조건을 바꾸거나 [지금 수집]을 눌러보세요.</span></div>`;
+    list.innerHTML = state.status === "todo" && !state.q
+      ? `<div class="empty"><div class="big">🎉 할 일을 다 끝냈어요</div><span class="muted">${meta.interval ? `새 질문은 ${meta.interval}분마다 자동으로 찾아와요.` : "[지금 찾기]를 누르면 새 질문을 찾아옵니다."}</span></div>`
+      : `<div class="empty">해당하는 질문이 없어요.<br><span class="muted">위의 조건을 바꿔 보세요.</span></div>`;
     return;
   }
   list.innerHTML = items.map(cardHtml).join("");
@@ -479,19 +527,18 @@ function cardHtml(q) {
     .map((m) => productById(m.product_id)?.name).filter(Boolean);
 
   return `
-  <article class="card ${low ? "low" : ""} ${q.status === "opened" ? "opened" : ""}" data-id="${esc(q.doc_id)}" style="${color ? `--c:${esc(color)}` : ""}">
+  <article class="card ${low ? "low" : ""} ${q.status === "opened" ? "opened" : ""}" data-id="${esc(q.doc_id)}" ${cardData(q)} style="${color ? `--c:${esc(color)}` : ""}">
     <div class="card-main">
-      <a class="title" href="${esc(q.url)}" target="_blank" rel="noopener" data-open>
+      <a class="title" href="${esc(q.url)}" target="_blank" rel="noopener" data-open title="관련도 점수 ${Math.round(bestMatch.score || q.score || 0)} · 누르면 질문이 새 창으로 열려요">
         ${isNew ? '<span class="new-badge">NEW</span>' : ""}${highlight(q.title, terms)}
       </a>
       ${snippet ? `<p class="snippet">${highlight(snippet, terms)}</p>` : ""}
       <div class="meta">
-        ${productBadge(p, lowProduct)}
-        ${cats.map((c) => `<span class="badge">${esc(c)}</span>`).join("")}
         ${ansBadge}
         ${q.reward ? `<span class="badge">내공 ${q.reward}</span>` : ""}
         <span>${time}</span>
-        <span title="관련도 점수">점수 ${Math.round(bestMatch.score || q.score || 0)}</span>
+        ${productBadge(p, lowProduct)}
+        ${cats.map((c) => `<span class="cat">#${esc(c)}</span>`).join("")}
         ${others.length ? `<span>· ${esc(others.join(", "))}에도 해당</span>` : ""}
         ${statusLabel(q)}
       </div>
@@ -510,7 +557,7 @@ function productBadge(p, lowProduct) {
 function statusLabel(q, social) {
   const by = meta.auth && q.status_by ? ` · ${esc(personName(q.status_by))}` : "";
   if (q.status === "answered") return `<b>${social ? "댓글완료" : "답변완료"}${by}</b>`;
-  if (q.status === "skipped") return `<b>제외함${by}</b>`;
+  if (q.status === "skipped") return `<b>건너뜀${by}</b>`;
   // 다른 사람이 이미 열어본 글: 같은 질문에 두 명이 답하지 않도록 표시
   if (q.status === "opened" && meta.auth && q.status_by && q.status_by !== meta.user.username) {
     return `<span class="badge busy" title="${esc(personName(q.status_by))} 님이 이 글을 열어봤습니다">${esc(personName(q.status_by))} 확인 중</span>`;
@@ -520,24 +567,52 @@ function statusLabel(q, social) {
 
 function answerBadge(q) {
   const ans = q.answer_count;
-  if (ans === 0) return `<span class="badge zero">답변 0</span>`;
+  if (ans === 0) return `<span class="badge zero" title="아직 답변이 없어요 — 첫 답변이 가장 잘 보입니다">답변 0</span>`;
   if (ans != null) return `<span class="badge ${ans >= 5 ? "many" : ""}">답변 ${ans}</span>`;
   return `<span class="badge" title="상세 정보를 아직 못 가져왔습니다">답변 ?</span>`;
 }
 
+function cardData(q) {
+  return `data-status="${esc(q.status)}" data-has-draft="${(q.draft || "").trim() ? 1 : 0}"`;
+}
+
+// 카드 버튼: 지금 할 단계 하나만 크게 (① AI 초안 → ② 복사하고 열기 → ③ 달았어요)
 function actionsHtml(q, social) {
-  const actions = [];
-  const done = social ? "댓글완료" : "답변완료";
-  if (q.status === "new" || q.status === "opened") {
-    actions.push(`<button class="btn small" data-act="answered" title="${social ? "댓글을" : "답변을"} 달았으면 눌러주세요">✓ ${done}</button>`);
-    actions.push(`<button class="btn small" data-act="skipped" title="${social ? "댓글을 달지 않을" : "답변하지 않을"} 글">제외</button>`);
-  } else {
-    actions.push(`<button class="btn small" data-act="opened">할 일로</button>`);
+  const noun = social ? "댓글" : "답변";
+  if (q.status !== "new" && q.status !== "opened") {
+    return `<button class="btn" data-act="opened">↩ 할 일로 되돌리기</button>`;
   }
-  if (meta.ai.enabled) {
-    actions.push(`<button class="btn small" data-act="draft">${q.draft ? "초안 보기" : social ? "AI 댓글" : "AI 초안"}</button>`);
+  const hasDraft = !!(q.draft || "").trim();
+  // 초안 칸이 열려 있으면 그 안의 [복사하고 열기]가 다음 단계 → 여기서는 크게 강조하지 않음
+  if (q.draftOpen) {
+    return `<button class="btn" data-act="answered">✓ ${noun} 달았어요</button>`
+      + `<button class="btn quiet" data-act="draft">초안 접기</button>`
+      + `<button class="linkbtn skip" data-act="skipped">건너뛰기</button>`;
   }
-  return actions.join("");
+  const done = (cls) => `<button class="btn ${cls}" data-act="answered" title="${noun}을 올렸으면 눌러주세요. [작업 결과]에서 노출 여부를 매일 확인합니다">✓ ${noun} 달았어요</button>`;
+  const draftBtn = (cls) => `<button class="btn ${cls}" data-act="draft">${hasDraft ? "초안 보기" : `✨ AI ${noun} 초안`}</button>`;
+  const out = [];
+  if (meta.ai.enabled && q.status !== "opened") out.push(draftBtn("primary"), done(""));
+  else out.push(done("primary"), meta.ai.enabled ? draftBtn("") : "");
+  out.push(`<button class="linkbtn skip" data-act="skipped" title="${noun}을 달지 않을 글 — 목록에서 빠집니다 (되돌리기 가능)">건너뛰기</button>`);
+  return out.join("");
+}
+
+function refreshActions(card) {
+  const box = card.querySelector(".actions");
+  if (!box) return;
+  const q = {
+    status: card.dataset.status, draft: card.dataset.hasDraft === "1" ? "y" : "",
+    draftOpen: card.querySelector(".draft") && !card.querySelector(".draft").hidden,
+  };
+  box.innerHTML = actionsHtml(q, card.dataset.kind === "social");
+}
+
+function markOpened(card) {
+  if (card.dataset.status !== "new") return;
+  card.dataset.status = "opened";
+  card.classList.add("opened");
+  refreshActions(card);
 }
 
 function draftBoxHtml(q, social) {
@@ -546,11 +621,11 @@ function draftBoxHtml(q, social) {
       <div class="draft" hidden>
         <textarea spellcheck="false">${esc(q.draft || "")}</textarea>
         <div class="row">
-          <button class="btn small primary" data-act="copy-open">복사하고 ${what} 열기</button>
-          <button class="btn small" data-act="copy">복사</button>
-          <button class="btn small" data-act="regen">다시 작성</button>
-          <span class="hint">AI 초안입니다. 내용을 확인·수정한 뒤 직접 등록하세요.</span>
+          <button class="btn primary" data-act="copy-open">📋 복사하고 ${what} 열기</button>
+          <button class="btn" data-act="copy">복사만</button>
+          <button class="btn quiet" data-act="regen">다시 쓰기</button>
         </div>
+        <p class="steps"><span>① 내용 확인·수정</span><span>② 복사하고 ${what} 열어 붙여넣고 등록</span><span>③ 돌아와서 <b>✓ ${social ? "댓글" : "답변"} 달았어요</b></span></p>
       </div>`;
 }
 
@@ -567,8 +642,10 @@ async function loadSocial() {
   if (state.view !== view) return; // 그사이 다른 탭으로 옮김
   const list = $("#list");
   if (!data.items.length) {
-    const empty = state.sStatus === "todo" ? "처리할 글이 없습니다." : "글이 없습니다.";
-    list.innerHTML = `<div class="empty">${empty}<br><span class="muted">${meta.social.platforms[view] ? "[지금 찾기]를 누르거나 조건을 바꿔보세요." : "키를 넣으면 여기에 쌓입니다."}</span></div>`;
+    const name = view === "youtube" ? "영상" : "글";
+    if (!meta.social.platforms[view]) list.innerHTML = `<div class="empty">아직 찾아온 ${name}이 없어요.<br><span class="muted">키를 넣으면 여기에 쌓입니다.</span></div>`;
+    else if (state.sStatus === "todo" && !state.sQ) list.innerHTML = `<div class="empty"><div class="big">🎉 할 일을 다 끝냈어요</div><span class="muted">${meta.social.interval_hours ? `새 ${name}은 ${meta.social.interval_hours}시간마다 자동으로 찾아와요.` : "[지금 찾기]를 누르면 새로 찾아옵니다."}</span></div>`;
+    else list.innerHTML = `<div class="empty">해당하는 ${name}이 없어요.<br><span class="muted">위의 조건을 바꿔 보세요.</span></div>`;
     return;
   }
   list.innerHTML = data.items.map(socialCardHtml).join("");
@@ -613,20 +690,19 @@ function socialCardHtml(q) {
   ].join("") : "";
   const author = q.author ? (q.author_url ? `<a href="${esc(q.author_url)}" target="_blank" rel="noopener">${yt ? "" : "@"}${esc(q.author)}</a>` : esc(q.author)) : "";
   return `
-  <article class="card social ${yt ? "yt" : "th"} ${low ? "low" : ""} ${q.status === "opened" ? "opened" : ""}" data-kind="social" data-id="${esc(q.post_id)}" style="${color ? `--c:${esc(color)}` : ""}">
+  <article class="card social ${yt ? "yt" : "th"} ${low ? "low" : ""} ${q.status === "opened" ? "opened" : ""}" data-kind="social" data-id="${esc(q.post_id)}" ${cardData(q)} style="${color ? `--c:${esc(color)}` : ""}">
     ${yt && q.thumbnail ? `<a class="thumb" href="${esc(q.url)}" target="_blank" rel="noopener" data-open><img src="${esc(q.thumbnail)}" alt="" loading="lazy">${q.duration ? `<span class="dur">${durationText(q.duration)}</span>` : ""}</a>` : ""}
     <div class="card-main">
-      <a class="title" href="${esc(q.url)}" target="_blank" rel="noopener" data-open>
+      <a class="title" href="${esc(q.url)}" target="_blank" rel="noopener" data-open title="찾은 검색어: ${esc((q.queries || []).join(", "))} · 누르면 새 창으로 열려요">
         ${isNew ? '<span class="new-badge">NEW</span>' : ""}${q.is_short ? '<span class="shorts-badge">숏츠</span>' : ""}${highlight(title || "(내용 없음)", terms)}
       </a>
       ${body.trim() ? `<p class="snippet">${highlight(body.trim(), terms)}</p>` : ""}
       <div class="meta">
-        ${productBadge(p, lowProduct)}
-        ${cats.map((c) => `<span class="badge">${esc(c)}</span>`).join("")}
         ${stats}
         ${author ? `<span>${author}</span>` : ""}
         <span>${q.published_at ? relTime(q.published_at) : `수집 ${relTime(q.first_seen)}`}</span>
-        <span title="이 글을 찾은 검색어">🔎 ${esc((q.queries || []).join(", "))}</span>
+        ${productBadge(p, lowProduct)}
+        ${cats.map((c) => `<span class="cat">#${esc(c)}</span>`).join("")}
         ${statusLabel(q, true)}
       </div>
       ${draftBoxHtml(q, true)}
@@ -680,7 +756,7 @@ function exposureCardHtml(q) {
   const time = q.asked_at ? `작성 ${relTime(q.asked_at)}` : "";
   const done = q.status === "answered" || q.status === "skipped";
   return `
-  <article class="card exp ${done ? "done" : ""} ${q.status === "opened" ? "opened" : ""}" data-id="${esc(q.doc_id)}" style="${p ? `--c:${esc(p.color)}` : ""}">
+  <article class="card exp ${done ? "done" : ""} ${q.status === "opened" ? "opened" : ""}" data-id="${esc(q.doc_id)}" ${cardData(q)} style="${p ? `--c:${esc(p.color)}` : ""}">
     <div class="card-main">
       <div class="ranks">${rankBadges(q)}</div>
       <a class="title" href="${esc(q.url)}" target="_blank" rel="noopener" data-open>${highlight(q.title, terms)}</a>
@@ -744,22 +820,37 @@ async function setStatus(card, status) {
     clearTimeout(draftSaveTimers[id]);
     body.draft = ta.value;
   }
+  const prev = card.dataset.status === "opened" ? "opened" : "new";
+  const nth = myToday() + 1;
   await api(itemPath(card, "/status"), body);
+  const noun = card.dataset.kind === "social" ? "댓글" : "답변";
+  // 완료·건너뛰기는 [되돌리기]로 바로 취소할 수 있게
+  const undo = status === "answered" || status === "skipped"
+    ? async () => {
+      await api(itemPath(card, "/status"), { status: prev });
+      toast("되돌렸어요. 다시 할 일에 있습니다");
+      await loadMeta();
+      await loadList();
+    }
+    : null;
+  const msg = status === "answered" ? `✓ ${noun} 완료 — 오늘 ${nth}건째예요. 내일 아침 노출 여부를 확인할게요`
+    : status === "skipped" ? "건너뛰었어요" : "할 일로 되돌렸어요";
+  toast(msg, undo);
   if (state.view === "exposure") {
     // 같은 글이 여러 검색어에 걸쳐 있을 수 있으니 목록을 다시 그림
-    toast(status === "answered" ? "답변완료로 표시했습니다" : status === "skipped" ? "제외했습니다" : "할 일로 되돌렸습니다");
     loadMeta();
     return loadExposure();
   }
   const listStatus = isSocial() ? state.sStatus : state.status;
   if (status === "opened" && listStatus === "todo") {
-    card.classList.add("opened");
+    markOpened(card);
   } else if (listStatus !== "all") {
-    card.remove();
+    card.classList.add("leaving");
+    setTimeout(() => card.remove(), 180);
+  } else {
+    card.dataset.status = status;
+    refreshActions(card);
   }
-  if (status === "answered") toast(isSocial() ? "댓글완료로 표시했습니다" : "답변완료로 표시했습니다");
-  if (status === "skipped") toast("제외했습니다");
-  if (status === "opened" && listStatus !== "todo") toast("할 일로 되돌렸습니다");
   loadMeta();
 }
 
@@ -768,6 +859,7 @@ async function draft(card, btn, regen) {
   const ta = box.querySelector("textarea");
   if (!regen && ta.value.trim()) {
     box.hidden = !box.hidden;
+    refreshActions(card);
     return;
   }
   const label = btn.textContent;
@@ -784,8 +876,11 @@ async function draft(card, btn, regen) {
   } finally {
     btn.disabled = false;
     btn.textContent = label;
-    const main = card.querySelector('[data-act="draft"]');
-    if (ok && main) main.textContent = "초안 보기";
+    if (ok) {
+      card.dataset.hasDraft = "1";
+      refreshActions(card);
+      ta.focus();
+    }
   }
 }
 
@@ -820,6 +915,15 @@ async function copyText(text) {
 }
 
 document.addEventListener("click", async (ev) => {
+  const close = ev.target.closest("[data-dismiss]");
+  if (close) {
+    dismiss(close.dataset.dismiss);
+    close.closest(".notice")?.remove();
+    return;
+  }
+  // 관리 메뉴는 바깥을 누르면 닫힘
+  const menu = $("#menu");
+  if (menu && menu.open && !ev.target.closest("#menu")) menu.open = false;
   const view = ev.target.closest(".view, .subview");
   if (view) {
     const next = view.dataset.view || (view.dataset.group === "kin" ? state.kinView : view.dataset.group);
@@ -862,7 +966,7 @@ document.addEventListener("click", async (ev) => {
   if (ev.target.closest("[data-open]")) {
     const todo = state.view === "exposure" ? !card.classList.contains("done") : (isSocial() ? state.sStatus : state.status) === "todo";
     if (!card.classList.contains("opened") && todo) {
-      api(itemPath(card, "/status"), { status: "opened" }).then(() => card.classList.add("opened")).catch(() => {});
+      api(itemPath(card, "/status"), { status: "opened" }).then(() => markOpened(card)).catch(() => {});
     }
     return; // 링크는 새 탭으로 열림
   }
@@ -876,12 +980,15 @@ document.addEventListener("click", async (ev) => {
     else if (act === "copy" || act === "copy-open") {
       saveDraftSoon(card, 0);
       await copyText(card.querySelector(".draft textarea").value);
-      toast("초안을 복사했습니다");
+      const noun = card.dataset.kind === "social" ? "댓글" : "답변";
       if (act === "copy-open") {
         window.open(card.querySelector(".title").href, "_blank", "noopener");
+        toast(`복사했어요. 새 창에 붙여넣고 등록한 뒤, 여기서 [✓ ${noun} 달았어요]를 눌러주세요`);
         if (state.view === "exposure" || (isSocial() ? state.sStatus : state.status) === "todo") {
-          api(itemPath(card, "/status"), { status: "opened" }).catch(() => {});
+          api(itemPath(card, "/status"), { status: "opened" }).then(() => markOpened(card)).catch(() => {});
         }
+      } else {
+        toast("복사했어요");
       }
     }
   } catch (e) {
@@ -933,6 +1040,26 @@ $("#exp-check-btn").addEventListener("click", async () => {
   }
 });
 
+// [할 일 | 완료 | 건너뜀 | 전체] 같은 버튼 묶음
+function bindSeg(sel) {
+  const el = $(sel);
+  const key = el.dataset.key;
+  const paint = () => el.querySelectorAll("button").forEach((b) => {
+    const on = b.dataset.v === (state[key] || "");
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  paint();
+  el.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    state[key] = b.dataset.v;
+    paint();
+    saveFilters();
+    loadList();
+  });
+}
+
 function bindFilter(sel, key, isCheck) {
   const el = $(sel);
   if (isCheck) el.checked = !!state[key]; else el.value = state[key];
@@ -947,13 +1074,13 @@ function bindFilter(sel, key, isCheck) {
 // ---------------------------------------------------------------- 시작
 (async function init() {
   loadFilters();
-  bindFilter("#f-status", "status");
+  bindSeg("#f-status");
   bindFilter("#f-sort", "sort");
   bindFilter("#f-unanswered", "unanswered", true);
   bindFilter("#f-low", "low", true);
   bindFilter("#f-q", "q");
   bindFilter("#x-unanswered", "expUnanswered", true);
-  bindFilter("#s-status", "sStatus");
+  bindSeg("#s-status");
   $("#s-sort").addEventListener("input", (ev) => {
     state[sortKey()] = ev.target.value;
     saveFilters();
@@ -961,7 +1088,7 @@ function bindFilter(sel, key, isCheck) {
   });
   bindFilter("#s-kind", "ytKind");
   bindFilter("#r-platform", "rPlatform");
-  bindFilter("#r-state", "rState");
+  bindSeg("#r-state");
   bindFilter("#r-by", "rBy");
   bindFilter("#s-low", "sLow", true);
   bindFilter("#s-q", "sQ");

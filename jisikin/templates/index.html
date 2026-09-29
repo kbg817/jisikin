@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block status %}불러오는 중…{% endblock %}
+{% block status %}<span class="today" id="today">불러오는 중…</span>{% endblock %}
 {% block body %}
 <div class="wrap">
   <nav class="views" id="views">
@@ -9,77 +9,91 @@
     <button class="view results-tab" data-group="results"><span class="pf rs">✓</span>작업 결과 <span class="cnt warn" id="cnt-results"></span></button>
   </nav>
   <nav class="subviews" id="subviews">
-    <button class="subview active" data-view="feed">새 질문 <span class="muted">실시간으로 올라온 질문</span></button>
+    <button class="subview active" data-view="feed">새 질문 <span class="muted">방금 올라온 질문</span></button>
     <button class="subview" data-view="exposure">상위노출 글 <span class="muted">검색 상위에 뜨는 글</span></button>
   </nav>
   <nav class="tabs" id="tabs"></nav>
   <div class="chips" id="chips"></div>
 
-  <div class="toolbar" id="exp-toolbar" hidden>
-    <span class="exp-status" id="exp-status"></span>
-    <label title="답변완료/제외한 글 숨기기"><input type="checkbox" id="x-unanswered"> 처리 안 한 글만</label>
-    <button class="btn primary small" id="exp-check-btn" type="button">지금 확인</button>
+  <!-- 새 질문 -->
+  <div class="tools" id="feed-toolbar">
+    <div class="toolbar">
+      <div class="seg" id="f-status" data-key="status" role="tablist" aria-label="상태">
+        <button type="button" data-v="todo">할 일 <span class="n" data-count></span></button>
+        <button type="button" data-v="answered">답변완료</button>
+        <button type="button" data-v="skipped">건너뜀</button>
+        <button type="button" data-v="all">전체</button>
+      </div>
+      <select id="f-sort" title="정렬">
+        <option value="priority">답하기 좋은 순</option>
+        <option value="latest">최신순</option>
+      </select>
+      <input type="search" id="f-q" placeholder="제목·본문에서 찾기">
+      <div class="toggles">
+        <label title="답변 수를 모르는 질문도 포함"><input type="checkbox" id="f-unanswered"> 답변 0개만</label>
+        <label title="제품 키워드가 약하게 걸린 질문도 보기 (검색어 다듬을 때)"><input type="checkbox" id="f-low"> 관련도 낮은 것도</label>
+      </div>
+    </div>
+    <div class="runline"><span class="exp-status" id="feed-status"></span><button class="btn quiet small refresh" id="collect-btn" type="button">지금 수집</button></div>
   </div>
 
-  <div class="toolbar" id="social-toolbar" hidden>
-    <span class="exp-status" id="social-status"></span>
-    <select id="s-status" title="상태">
-      <option value="todo">할 일</option>
-      <option value="answered">댓글완료</option>
-      <option value="skipped">제외함</option>
-      <option value="all">전체</option>
-    </select>
-    <select id="s-sort" title="정렬"></select>
-    <select id="s-kind" title="영상 종류">
-      <option value="">일반 영상 + 숏츠</option>
-      <option value="exclude">일반 영상만</option>
-      <option value="only">숏츠만</option>
-    </select>
-    <label title="제품 키워드 점수가 min_score 미만인 글도 표시 (검색어 튜닝용)"><input type="checkbox" id="s-low"> 관련도 낮은 글도</label>
-    <input type="search" id="s-q" placeholder="제목·내용·작성자 검색">
-    <button class="btn primary small" id="social-collect-btn" type="button">지금 찾기</button>
+  <!-- 상위노출 글 -->
+  <div class="tools" id="exp-toolbar" hidden>
+    <div class="toolbar">
+      <div class="toggles">
+        <label title="답변완료·건너뛴 글 숨기기"><input type="checkbox" id="x-unanswered"> 아직 처리 안 한 글만</label>
+      </div>
+    </div>
+    <div class="runline"><span class="exp-status" id="exp-status"></span><button class="btn quiet small refresh" id="exp-check-btn" type="button">지금 확인</button></div>
   </div>
 
-  <div class="toolbar" id="results-toolbar" hidden>
-    <span class="exp-status" id="results-status"></span>
-    <select id="r-platform" title="어디에 단 답변·댓글">
-      <option value="">지식iN + 유튜브 + 쓰레드</option>
-      <option value="kin">지식iN</option>
-      <option value="youtube">유튜브</option>
-      <option value="threads">쓰레드</option>
-    </select>
-    <select id="r-state" title="확인 결과">
-      <option value="">모든 결과</option>
-      <option value="visible">✅ 노출 중</option>
-      <option value="problem">⚠️ 안 보임·삭제</option>
-      <option value="unknown">확인 전·확인 불가</option>
-    </select>
-    <select id="r-by" title="작업한 사람" hidden></select>
-    <button class="btn primary small" id="results-check-btn" type="button">지금 확인</button>
+  <!-- 유튜브 · 쓰레드 -->
+  <div class="tools" id="social-toolbar" hidden>
+    <div class="toolbar">
+      <div class="seg" id="s-status" data-key="sStatus" role="tablist" aria-label="상태">
+        <button type="button" data-v="todo">할 일 <span class="n" data-count></span></button>
+        <button type="button" data-v="answered">댓글완료</button>
+        <button type="button" data-v="skipped">건너뜀</button>
+        <button type="button" data-v="all">전체</button>
+      </div>
+      <select id="s-sort" title="정렬"></select>
+      <select id="s-kind" title="영상 종류">
+        <option value="">일반 영상 + 숏츠</option>
+        <option value="exclude">일반 영상만</option>
+        <option value="only">숏츠만</option>
+      </select>
+      <input type="search" id="s-q" placeholder="제목·내용·채널에서 찾기">
+      <div class="toggles">
+        <label title="제품 키워드가 약하게 걸린 글도 보기 (검색어 다듬을 때)"><input type="checkbox" id="s-low"> 관련도 낮은 것도</label>
+      </div>
+    </div>
+    <div class="runline"><span class="exp-status" id="social-status"></span><button class="btn quiet small refresh" id="social-collect-btn" type="button">지금 찾기</button></div>
   </div>
 
-  <div class="toolbar" id="feed-toolbar">
-    <span class="exp-status" id="feed-status"></span>
-    <select id="f-status" title="상태">
-      <option value="todo">할 일</option>
-      <option value="answered">답변완료</option>
-      <option value="skipped">제외함</option>
-      <option value="all">전체</option>
-    </select>
-    <select id="f-sort" title="정렬">
-      <option value="priority">추천순</option>
-      <option value="latest">최신순</option>
-    </select>
-    <label title="답변이 아직 없는 질문(답변 수를 모르는 질문 포함)"><input type="checkbox" id="f-unanswered"> 답변 없는 질문만</label>
-    <label title="점수가 min_score 미만인 질문도 표시 (키워드 튜닝용)"><input type="checkbox" id="f-low"> 관련도 낮은 질문도</label>
-    <input type="search" id="f-q" placeholder="제목·본문 검색">
-    <button class="btn primary small" id="collect-btn" type="button">지금 수집</button>
+  <!-- 작업 결과 -->
+  <div class="tools" id="results-toolbar" hidden>
+    <div class="toolbar">
+      <div class="seg" id="r-state" data-key="rState" role="tablist" aria-label="확인 결과">
+        <button type="button" data-v="">전체</button>
+        <button type="button" data-v="visible">✅ 노출 중</button>
+        <button type="button" data-v="problem">⚠️ 안 보임</button>
+        <button type="button" data-v="unknown">확인 전</button>
+      </div>
+      <select id="r-platform" title="어디에 단 답변·댓글">
+        <option value="">지식iN · 유튜브 · 쓰레드</option>
+        <option value="kin">지식iN</option>
+        <option value="youtube">유튜브</option>
+        <option value="threads">쓰레드</option>
+      </select>
+      <select id="r-by" title="작업한 사람" hidden></select>
+    </div>
+    <div class="runline"><span class="exp-status" id="results-status"></span><button class="btn quiet small refresh" id="results-check-btn" type="button">지금 확인</button></div>
   </div>
 
   <div id="notice"></div>
   <main id="list"></main>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"><span class="msg"></span><button type="button" class="undo" hidden>되돌리기</button></div>
 {% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='app.js') }}"></script>{% endblock %}
