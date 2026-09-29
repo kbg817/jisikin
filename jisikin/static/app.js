@@ -8,7 +8,7 @@ const state = {
   kinView: "feed", // 지식iN 탭에서 마지막으로 본 화면
   product: "", category: "", status: "todo", sort: "priority",
   unanswered: false, low: false, q: "", expUnanswered: false,
-  sStatus: "todo", sSort: "priority", ytSort: "views", sLow: false, sQ: "",
+  sStatus: "todo", sSort: "priority", ytSort: "views", ytKind: "", sLow: false, sQ: "",
 };
 const PLATFORM_NAMES = { youtube: "유튜브", threads: "쓰레드" };
 // 유튜브는 조회수 많은 순(= 사람들이 많이 보는 영상)이 기본
@@ -132,6 +132,7 @@ function renderViews() {
   $("#feed-toolbar").hidden = state.view !== "feed";
   $("#exp-toolbar").hidden = state.view !== "exposure";
   $("#social-toolbar").hidden = !isSocial();
+  $("#s-kind").hidden = state.view !== "youtube";
   if (isSocial()) {
     const sel = $("#s-sort");
     const opts = SORT_OPTIONS[state.view];
@@ -402,6 +403,7 @@ async function loadSocial() {
   const params = new URLSearchParams({
     platform: view, product: state.product, category: state.category, status: state.sStatus,
     sort: state[sortKey()],
+    shorts: view === "youtube" ? state.ytKind : "",
     include_low: state.sLow ? "1" : "", q: state.sQ,
   });
   const data = await api("/api/social?" + params);
@@ -420,6 +422,13 @@ function compactNum(n) {
   if (n >= 100000000) return `${(n / 100000000).toFixed(1).replace(/\.0$/, "")}억`;
   if (n >= 10000) return `${(n / 10000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, "")}만`;
   return num(n);
+}
+
+function durationText(sec) {
+  if (sec == null) return "";
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const mm = h ? String(m).padStart(2, "0") : m;
+  return `${h ? h + ":" : ""}${mm}:${String(s).padStart(2, "0")}`;
 }
 
 function socialCardHtml(q) {
@@ -448,10 +457,10 @@ function socialCardHtml(q) {
   const author = q.author ? (q.author_url ? `<a href="${esc(q.author_url)}" target="_blank" rel="noopener">${yt ? "" : "@"}${esc(q.author)}</a>` : esc(q.author)) : "";
   return `
   <article class="card social ${yt ? "yt" : "th"} ${low ? "low" : ""} ${q.status === "opened" ? "opened" : ""}" data-kind="social" data-id="${esc(q.post_id)}" style="${color ? `--c:${esc(color)}` : ""}">
-    ${yt && q.thumbnail ? `<a class="thumb" href="${esc(q.url)}" target="_blank" rel="noopener" data-open><img src="${esc(q.thumbnail)}" alt="" loading="lazy"></a>` : ""}
+    ${yt && q.thumbnail ? `<a class="thumb" href="${esc(q.url)}" target="_blank" rel="noopener" data-open><img src="${esc(q.thumbnail)}" alt="" loading="lazy">${q.duration ? `<span class="dur">${durationText(q.duration)}</span>` : ""}</a>` : ""}
     <div class="card-main">
       <a class="title" href="${esc(q.url)}" target="_blank" rel="noopener" data-open>
-        ${isNew ? '<span class="new-badge">NEW</span>' : ""}${highlight(title || "(내용 없음)", terms)}
+        ${isNew ? '<span class="new-badge">NEW</span>' : ""}${q.is_short ? '<span class="shorts-badge">숏츠</span>' : ""}${highlight(title || "(내용 없음)", terms)}
       </a>
       ${body.trim() ? `<p class="snippet">${highlight(body.trim(), terms)}</p>` : ""}
       <div class="meta">
@@ -769,6 +778,7 @@ function bindFilter(sel, key, isCheck) {
     saveFilters();
     loadList();
   });
+  bindFilter("#s-kind", "ytKind");
   bindFilter("#s-low", "sLow", true);
   bindFilter("#s-q", "sQ");
   if (!["feed", "exposure", "youtube", "threads"].includes(state.view)) state.view = "feed";

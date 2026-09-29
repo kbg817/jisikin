@@ -528,7 +528,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     # ------------------------------------------------------------ 유튜브 · 쓰레드
 
     SOCIAL_KEEP = (
-        "post_id platform url title body author author_url thumbnail published_at views likes comments queries "
+        "post_id platform url title body author author_url thumbnail published_at views likes comments duration is_short queries "
         "product score categories matches status status_by status_changed_at draft priority first_seen"
     ).split()
 
@@ -548,6 +548,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             query=(a.get("q") or "").strip(),
             # 유튜브는 조회수 많은 영상 = 사람들이 많이 보는 영상이 먼저
             sort=a.get("sort") or ("views" if platform == "youtube" else "priority"),
+            shorts=a.get("shorts", ""),
         )
         items = []
         for r in rows:

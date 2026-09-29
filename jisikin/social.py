@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import html
+import re
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,8 @@ YT_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 YT_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 YT_SEARCH_UNITS = 100      # search.list 1회 사용량
 YT_VIDEOS_UNITS = 1        # videos.list 1회 사용량
+YT_SHORTS_MAX_SECONDS = 180  # 숏츠는 3분 이하
+YT_SHORTS_URL = "https://www.youtube.com/shorts/{}"
 # 유튜브 할당량은 태평양 시간 자정에 초기화된다 (서머타임은 무시하고 1시간 일찍 넘어가도 상한 안이면 문제없음)
 YT_QUOTA_TZ = timezone(timedelta(hours=-8))
 
@@ -57,6 +60,17 @@ class SocialPost:
     views: int | None = None
     likes: int | None = None
     comments: int | None = None
+    duration: int | None = None     # (유튜브) 영상 길이(초)
+    is_short: bool | None = None    # (유튜브) 숏츠 여부
+
+
+def parse_duration(text: str | None) -> int | None:
+    """ISO 8601 길이 (PT1H2M3S) → 초."""
+    m = re.fullmatch(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?", text or "")
+    if not m or not text or text == "P":
+        return None
+    d, h, mi, s = (int(x or 0) for x in m.groups())
+    return d * 86400 + h * 3600 + mi * 60 + s
 
 
 @dataclass
@@ -208,7 +222,7 @@ class YouTubeClient:
     def _fill_stats(self, posts: list[SocialPost]) -> None:
         """조회수·좋아요·댓글 수와 전체 설명(검색 결과의 설명은 잘려 있음)."""
         by_id = {p.post_id[3:]: p for p in posts}
-        data = self._get(YT_VIDEOS_URL, {"part": "statistics,snippet", "id": ",".join(by_id)}, YT_VIDEOS_UNITS)
+        data = self._get(YT_VIDEOS_URL, {"part": "statistics,snippet,contentDetails", "id": ",".join(by_id)}, YT_VIDEOS_UNITS)
         for v in data.get("items") or []:
             p = by_id.get(v.get("id"))
             if not p:
@@ -218,6 +232,27 @@ class YouTubeClient:
             desc = (v.get("snippet") or {}).get("description")
             if desc:
                 p.body = desc
+            p.duration = parse_duration((v.get("contentDetails") or {}).get("duration"))
+            p.is_short = self._is_short(v.get("id"), p.duration)
+            if p.is_short:
+                p.url = YT_SHORTS_URL.format(v.get("id"))  # 숏츠 화면으로 열어야 댓글 달기 편함
+
+    def _is_short(self, vid: str, seconds: int | None) -> bool | None:
+        """API 에는 숏츠 표시가 없어서, 3분 이하 영상만 youtube.com/shorts/<id> 로 확인한다.
+        숏츠면 그 주소가 그대로 열리고(200), 일반 영상이면 watch 주소로 넘어간다(3xx). 할당량은 쓰지 않는다."""
+        if seconds is None:
+            return None
+        if seconds == 0 or seconds > YT_SHORTS_MAX_SECONDS:
+            return False
+        try:
+            res = self.session.head(YT_SHORTS_URL.format(vid), allow_redirects=False, timeout=10)
+            if res.status_code == 200:
+                return True
+            if 300 <= res.status_code < 400:
+                return False
+        except (requests.RequestException, AttributeError):
+            pass
+        return True  # 확인 못 하면 길이로 판단 (3분 이하 = 숏츠)
 
 
 # ---------------------------------------------------------------- 쓰레드

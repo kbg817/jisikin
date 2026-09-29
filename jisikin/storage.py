@@ -157,6 +157,8 @@ CREATE TABLE IF NOT EXISTS social_posts (
     views             INTEGER,
     likes             INTEGER,
     comments          INTEGER,
+    duration          INTEGER,                     -- (유튜브) 영상 길이(초)
+    is_short          INTEGER,                     -- (유튜브) 숏츠면 1
     queries           TEXT NOT NULL DEFAULT '[]',  -- 이 글을 찾은 검색어
     product           TEXT,
     score             REAL NOT NULL DEFAULT 0,
@@ -899,11 +901,13 @@ class Store:
             if row is None:
                 c.execute(
                     """INSERT INTO social_posts (post_id, platform, url, title, body, author, author_url, thumbnail,
-                                                 published_at, views, likes, comments, queries, first_seen, last_seen)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                                 published_at, views, likes, comments, duration, is_short,
+                                                 queries, first_seen, last_seen)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         post.post_id, post.platform, post.url, post.title, post.body, post.author, post.author_url,
                         post.thumbnail, iso(post.published_at), post.views, post.likes, post.comments,
+                        post.duration, _bool_int(post.is_short),
                         json.dumps([query], ensure_ascii=False), now_s, now_s,
                     ),
                 )
@@ -914,11 +918,14 @@ class Store:
             c.execute(
                 """UPDATE social_posts SET last_seen=?, queries=?,
                           body=CASE WHEN length(?) > length(body) THEN ? ELSE body END,
-                          views=COALESCE(?, views), likes=COALESCE(?, likes), comments=COALESCE(?, comments)
+                          views=COALESCE(?, views), likes=COALESCE(?, likes), comments=COALESCE(?, comments),
+                          duration=COALESCE(?, duration), is_short=COALESCE(?, is_short),
+                          url=CASE WHEN ? THEN ? ELSE url END
                    WHERE post_id=?""",
                 (
                     now_s, json.dumps(queries[-20:], ensure_ascii=False), post.body, post.body,
-                    post.views, post.likes, post.comments, post.post_id,
+                    post.views, post.likes, post.comments, post.duration, _bool_int(post.is_short),
+                    post.is_short is not None, post.url, post.post_id,
                 ),
             )
             return False
@@ -1005,11 +1012,17 @@ class Store:
         max_age_days: int | None = None,
         query: str = "",
         sort: str = "priority",
+        shorts: str = "",
         limit: int = 300,
         now: datetime | None = None,
     ) -> list[dict]:
+        """shorts: "only" 숏츠만 / "exclude" 일반 영상만 / 그 외 전체."""
         now = now or now_kst()
         where, args = ["platform=?"], [platform]
+        if shorts == "only":
+            where.append("is_short=1")
+        elif shorts == "exclude":
+            where.append("(is_short IS NULL OR is_short=0)")
         if product:
             if include_low:
                 where.append("(product=? OR matches LIKE ?)")
@@ -1127,6 +1140,10 @@ def views_per_day(q: dict, history: list[tuple[str, int]], now: datetime) -> tup
     return None, ""
 
 
+def _bool_int(v: bool | None) -> int | None:
+    return None if v is None else int(v)
+
+
 def _migrate(c: sqlite3.Connection) -> None:
     """이전 버전 DB 에 새 열을 추가한다."""
     cols = {r[1] for r in c.execute("PRAGMA table_info(questions)")}
@@ -1140,6 +1157,10 @@ def _migrate(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE questions ADD COLUMN status_by TEXT")
     if "draft_edited" not in cols:
         c.execute("ALTER TABLE questions ADD COLUMN draft_edited INTEGER NOT NULL DEFAULT 0")
+    social_cols = {r[1] for r in c.execute("PRAGMA table_info(social_posts)")}
+    if social_cols and "is_short" not in social_cols:
+        c.execute("ALTER TABLE social_posts ADD COLUMN duration INTEGER")
+        c.execute("ALTER TABLE social_posts ADD COLUMN is_short INTEGER")
 
 
 def _row_to_dict(row: sqlite3.Row, json_keys: tuple[str, ...] = ("sources", "categories", "matches")) -> dict:
