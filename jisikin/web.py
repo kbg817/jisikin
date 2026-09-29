@@ -13,6 +13,7 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, url
 from . import config as config_mod
 from .collector import collect, effective_interval, estimate_api_calls_per_day, resolve_mode
 from .config import AppConfig, ConfigError
+from .diagnose import run_diagnostics
 from .drafter import DraftError, ai_status, generate_draft
 from .matcher import Matcher
 from .storage import STATUSES, Store, iso, now_kst
@@ -21,8 +22,9 @@ API_DAILY_LIMIT = 25000
 
 
 class AppState:
-    def __init__(self, config_path: Path, db_path: Path | str):
+    def __init__(self, config_path: Path, db_path: Path | str, env_path: Path | None = None):
         self.config_path = Path(config_path)
+        self.env_path = Path(env_path) if env_path else config_mod.ENV_PATH
         self.cfg: AppConfig = config_mod.load_config(self.config_path)
         self.store = Store(db_path)
         self.running = False
@@ -207,6 +209,33 @@ def create_app(state: AppState) -> Flask:
         names = {p.id: p.name for p in state.cfg.products}
         return jsonify(matches=[{**m.to_dict(), "product_name": names.get(m.product_id)} for m in matches])
 
+    @app.post("/api/diagnose")
+    def api_diagnose():
+        require_api_header()
+        ok, lines = run_diagnostics(state.cfg)
+        return jsonify(ok=ok, lines=lines)
+
+    @app.post("/settings/keys")
+    def settings_keys():
+        if request.form.get("csrf") != csrf_token:
+            abort(403)
+        # 비워둔 칸은 기존 값 유지, '삭제' 를 입력하면 지움
+        values = {}
+        for key in config_mod.ENV_KEYS:
+            v = (request.form.get(key) or "").strip()
+            if v == "삭제":
+                values[key] = ""
+            elif v:
+                values[key] = v
+        if values:
+            try:
+                config_mod.save_env_values(values, state.env_path)
+            except ConfigError as e:
+                return redirect(url_for("settings", key_error=str(e)))
+            state.log("API 키 저장 — 새 설정으로 수집을 시작합니다")
+            state.trigger()
+        return redirect(url_for("settings", keys_saved="1"))
+
     @app.get("/api/logs")
     def api_logs():
         return jsonify(lines=list(state.logs))
@@ -242,6 +271,9 @@ def create_app(state: AppState) -> Flask:
             api_limit=API_DAILY_LIMIT,
             ai_ok=ai_ok,
             ai_reason=ai_reason,
+            masked=config_mod.masked_env(),
+            keys_saved=request.args.get("keys_saved") == "1",
+            key_error=request.args.get("key_error"),
             runs=state.store.recent_runs(15),
         )
 

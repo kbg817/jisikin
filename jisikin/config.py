@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.yaml"
 EXAMPLE_CONFIG_PATH = ROOT / "config.example.yaml"
 ENV_PATH = ROOT / ".env"
+EXAMPLE_ENV_PATH = ROOT / ".env.example"
+ENV_KEYS = ("NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET", "ANTHROPIC_API_KEY")
 DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "jisikin.db"
 
@@ -267,6 +269,55 @@ def load_env(path: Path = ENV_PATH) -> None:
         value = value.strip().strip('"').strip("'")
         if key and value and key not in os.environ:
             os.environ[key] = value
+
+
+def _env_key(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        return None
+    return stripped.split("=", 1)[0].strip().removeprefix("export ").strip()
+
+
+def save_env_values(values: dict[str, str], path: Path = ENV_PATH) -> None:
+    """키 값을 .env 에 저장하고 바로 적용한다. 다른 줄(주석 등)은 그대로 둔다."""
+    clean: dict[str, str] = {}
+    for key, value in values.items():
+        value = (value or "").strip().strip('"').strip("'")
+        if re.search(r"\s", value):
+            raise ConfigError(f"{key} 값에 공백이나 줄바꿈이 들어있습니다. 키만 정확히 붙여넣어 주세요.")
+        clean[key] = value
+
+    if path.exists():
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    elif EXAMPLE_ENV_PATH.exists():
+        lines = EXAMPLE_ENV_PATH.read_text(encoding="utf-8-sig").splitlines()
+    else:
+        lines = []
+    remaining = dict(clean)
+    out = []
+    for line in lines:
+        key = _env_key(line)
+        if key in remaining:
+            out.append(f"{key}={remaining.pop(key)}")
+        else:
+            out.append(line)
+    out.extend(f"{k}={v}" for k, v in remaining.items())
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+    for key, value in clean.items():
+        if value:
+            os.environ[key] = value
+        else:
+            os.environ.pop(key, None)
+
+
+def masked_env(keys=ENV_KEYS) -> dict[str, str]:
+    """화면 표시용: 저장된 키를 '••••abcd' 형태로."""
+    out = {}
+    for key in keys:
+        v = os.environ.get(key, "").strip()
+        out[key] = ("••••" + v[-4:]) if len(v) > 4 else ("••••" if v else "")
+    return out
 
 
 def naver_credentials() -> tuple[str, str] | None:

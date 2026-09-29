@@ -76,59 +76,9 @@ def cmd_collect(args) -> int:
 
 
 def cmd_check(args) -> int:
-    from .collector import effective_interval, estimate_api_calls_per_day, resolve_mode
-    from .drafter import ai_status
-    from .naver import NaverClient, NaverError
+    from .diagnose import main_check
 
-    ok = True
-    try:
-        cfg = config_mod.load_config()
-        print(f"[OK] 설정 파일: {config_mod.CONFIG_PATH}")
-        for p in cfg.products:
-            print(f"     - {p.name}: 키워드 {len(p.keywords)}개, 카테고리 {len(p.categories)}개, 검색어 {len(p.search_queries())}개")
-    except ConfigError as e:
-        print(f"[오류] 설정 파일: {e}")
-        return 1
-
-    creds = config_mod.naver_credentials()
-    mode = resolve_mode(cfg)
-    print(f"[{'OK' if creds else '--'}] 네이버 API 키: {'있음' if creds else '없음 (웹 검색 모드로 동작)'}")
-    print(f"     수집 방식: {mode}, 자동 수집 간격: {effective_interval(cfg)}분")
-    if mode == "api":
-        calls = estimate_api_calls_per_day(cfg)
-        warn = "  ← 하루 한도(25,000회)에 가까움. 간격을 늘리거나 검색어를 줄이세요." if calls > 20000 else ""
-        print(f"     예상 API 호출: 하루 약 {calls:,}회{warn}")
-
-    client = NaverClient(credentials=creds, delay_seconds=cfg.settings.request_delay_seconds)
-    query = cfg.all_search_queries()[0]
-    try:
-        items = client.search_api(query, 5) if mode == "api" else client.search_web(query)
-        print(f"[{'OK' if items else '??'}] '{query}' 검색: {len(items)}건")
-        for it in items[:3]:
-            print(f"     · {it.title}  ({it.url})")
-        if not items:
-            ok = False
-            print("     결과가 0건입니다. 웹 모드라면 네이버 화면 구조가 바뀌었을 수 있습니다.")
-    except NaverError as e:
-        ok = False
-        items = []
-        print(f"[오류] 검색 실패: {e}")
-
-    if items and cfg.settings.fetch_details:
-        try:
-            d = client.fetch_detail(items[0].url)
-            answers = d.answer_count if d.answer_count is not None else "모름"
-            asked = f"{d.asked_at:%Y-%m-%d %H:%M}" if d.asked_at else "모름"
-            print(
-                f"[{'OK' if d.title else '??'}] 상세 페이지: 제목={'O' if d.title else 'X'} "
-                f"본문={'O' if d.body else 'X'} 답변수={answers} 작성일={asked}"
-            )
-        except NaverError as e:
-            print(f"[오류] 상세 페이지: {e}")
-
-    ai_ok, reason = ai_status()
-    print(f"[{'OK' if ai_ok else '--'}] AI 답변 초안: {reason}")
-    return 0 if ok else 1
+    return main_check()
 
 
 def cmd_classify(args) -> int:

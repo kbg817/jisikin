@@ -35,7 +35,7 @@ def ai_status() -> tuple[bool, str]:
     except ImportError:
         return False, "anthropic 패키지가 없습니다. (pip install -r requirements.txt)"
     if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        return False, ".env 에 ANTHROPIC_API_KEY 를 넣으면 AI 답변 초안을 쓸 수 있습니다."
+        return False, "[설정] > API 키에 Claude API 키(ANTHROPIC_API_KEY)를 넣으면 AI 답변 초안을 쓸 수 있습니다."
     return True, "사용 가능"
 
 

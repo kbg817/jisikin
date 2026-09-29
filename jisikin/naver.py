@@ -358,7 +358,7 @@ class NaverClient:
     # --- 공식 검색 API
     def search_api(self, query: str, count: int = 50) -> list[RawQuestion]:
         if not self.credentials:
-            raise NaverError("네이버 API 키가 없습니다. .env 에 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 을 넣어주세요.", fatal=True)
+            raise NaverError("네이버 API 키가 없습니다. [설정] > API 키에 Client ID / Secret 을 넣어주세요.", fatal=True)
         cid, secret = self.credentials
         params = {"query": query, "display": max(1, min(count, 100)), "start": 1, "sort": "date"}
         try:

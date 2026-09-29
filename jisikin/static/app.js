@@ -135,7 +135,7 @@ function renderNotice() {
     notes.push(`<b>마지막 수집에서 오류 ${r.errors.length}건</b><ul>${r.errors.slice(0, 5).map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`);
   }
   if (meta.mode === "web") {
-    notes.push("네이버 검색 API 키가 없어 <b>웹 검색 모드</b>로 동작 중입니다. 더 빠르고 안정적인 수집을 위해 <a href='/settings'>설정</a>에서 API 키 안내를 확인하세요.");
+    notes.push("네이버 검색 API 키가 없어 <b>웹 검색 모드</b>로 동작 중입니다. 더 빠르고 안정적으로 수집하려면 <a href='/settings'>설정</a>에서 네이버 API 키를 붙여넣으세요. (발급 방법도 거기 있어요)");
   }
   $("#notice").innerHTML = notes.map((n) => `<div class="notice">${n}</div>`).join("");
 }

@@ -30,6 +30,39 @@
     </form>
 
     <aside>
+      <form method="post" action="/settings/keys" class="panel keys">
+        <h2>API 키</h2>
+        {% if keys_saved %}<div class="ok">저장했습니다. 바로 적용되어 수집을 시작합니다.</div>{% endif %}
+        {% if key_error %}<div class="error">{{ key_error }}</div>{% endif %}
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>네이버 Client ID
+          <input name="NAVER_CLIENT_ID" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.NAVER_CLIENT_ID) if masked.NAVER_CLIENT_ID else '붙여넣기' }}">
+        </label>
+        <label>네이버 Client Secret
+          <input name="NAVER_CLIENT_SECRET" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.NAVER_CLIENT_SECRET) if masked.NAVER_CLIENT_SECRET else '붙여넣기' }}">
+        </label>
+        <label>Claude API 키 <span class="muted">(선택 · AI 초안용)</span>
+          <input name="ANTHROPIC_API_KEY" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.ANTHROPIC_API_KEY) if masked.ANTHROPIC_API_KEY else 'sk-ant-...' }}">
+        </label>
+        <p class="muted" style="font-size:12px;margin:4px 0 8px">
+          비워둔 칸은 기존 값을 유지합니다. 지우려면 <b>삭제</b> 라고 입력하세요.
+          키는 이 PC의 <code>.env</code> 파일에만 저장됩니다.
+        </p>
+        <button class="btn primary" type="submit">키 저장</button>
+        {% if not has_naver_keys %}
+        <details style="margin-top:10px;font-size:13px" open>
+          <summary><b>네이버 키 발급 방법 (무료, 5분)</b></summary>
+          <ol style="padding-left:18px;margin:6px 0">
+            <li><a href="https://developers.naver.com/apps/#/register" target="_blank" rel="noopener">네이버 개발자센터 애플리케이션 등록</a> 열기 (네이버 로그인)</li>
+            <li>애플리케이션 이름: 아무거나 (예: 지식인수집기)</li>
+            <li>사용 API: <b>검색</b> 선택</li>
+            <li>비로그인 오픈 API 서비스 환경: <b>WEB 설정</b> → URL <code>http://127.0.0.1</code></li>
+            <li>등록 후 나오는 <b>Client ID</b>, <b>Client Secret</b> 을 위 칸에 붙여넣고 [키 저장]</li>
+          </ol>
+        </details>
+        {% endif %}
+      </form>
+
       <div class="panel">
         <h2>연결 상태</h2>
         <dl>
@@ -50,14 +83,12 @@
           <dt>AI 초안</dt>
           <dd class="{{ 'ok-dot' if ai_ok else 'no-dot' }}">{{ ai_reason }}</dd>
         </dl>
-        {% if not has_naver_keys %}
-        <p style="font-size:13px">
-          <b>네이버 API 키 발급 (무료, 5분)</b><br>
-          1) <a href="https://developers.naver.com/apps/#/register" target="_blank" rel="noopener">developers.naver.com</a> 에서 애플리케이션 등록<br>
-          2) 사용 API 에 <b>검색</b> 선택, 환경은 WEB 설정(http://127.0.0.1) 추가<br>
-          3) 발급된 Client ID / Secret 을 프로그램 폴더의 <code>.env</code> 파일에 저장 후 재시작
-        </p>
-        {% endif %}
+        <div style="margin-top:12px">
+          <button class="btn" id="d-run" type="button">연결 점검</button>
+          <span class="muted" style="font-size:12px">네이버에서 실제로 질문을 읽어오는지 확인합니다 (10초 정도)</span>
+        </div>
+        <pre class="diag" id="d-result" hidden></pre>
+        <button class="btn small" id="d-copy" type="button" hidden>결과 복사</button>
       </div>
 
       <div class="panel test">
@@ -106,6 +137,29 @@ document.getElementById("t-run").addEventListener("click", async () => {
       <b>${esc(m.product_name)}</b> — 점수 ${m.score} ${m.relevant ? "✅ 수집됨" : "⚠️ 점수 부족 (min_score 미만)"}<br>
       <span class="muted">키워드: ${esc(m.keywords.join(", ") || "-")} / 카테고리: ${esc(m.categories.join(", ") || "-")}</span>
     </div>`).join("");
+});
+
+document.getElementById("d-run").addEventListener("click", async (ev) => {
+  const btn = ev.currentTarget, out = document.getElementById("d-result"), copy = document.getElementById("d-copy");
+  btn.disabled = true; btn.textContent = "점검 중…";
+  out.hidden = false; out.textContent = "네이버에 연결해 보는 중입니다…";
+  try {
+    const res = await fetch("/api/diagnose", {method: "POST", headers: {"Content-Type": "application/json", "X-Jisikin": "1"}, body: "{}"});
+    const data = await res.json();
+    out.textContent = (data.ok ? "✅ 모두 정상입니다.\n\n" : "⚠️ 확인이 필요한 항목이 있습니다. 아래 결과를 복사해서 Claude 에게 보내주세요.\n\n") + data.lines.join("\n");
+    copy.hidden = false;
+  } catch (e) {
+    out.textContent = "점검 실패: " + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "연결 점검";
+  }
+});
+document.getElementById("d-copy").addEventListener("click", async () => {
+  const text = document.getElementById("d-result").textContent;
+  try { await navigator.clipboard.writeText(text); } catch (e) {
+    const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  document.getElementById("d-copy").textContent = "복사됨";
 });
 </script>
 </body>

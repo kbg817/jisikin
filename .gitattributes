@@ -1,2 +1,2 @@
-*.bat text eol=crlf
+*.bat -text binary
 *.sh text eol=lf

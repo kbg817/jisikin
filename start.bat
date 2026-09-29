@@ -1,12 +1,78 @@
 @echo off
-chcp 65001 > nul
-cd /d %~dp0
-if not exist .venv (
-  echo ì²˜ìŒ ì‹¤í–‰: ê°€ìƒí™˜ê²½ì„ ë§Œë“¤ê³  í•„ìš”í•œ íŒ¨í‚¤ì§€ë¥¼ ì„¤ì¹˜í•©ë‹ˆë‹¤...
-  python -m venv .venv || (echo Python 3.10 ì´ìƒì„ ë¨¼ì € ì„¤ì¹˜í•´ ì£¼ì„¸ìš”: https://www.python.org/downloads/ & pause & exit /b 1)
+setlocal
+cd /d "%~dp0"
+title Áö½ÄiN Áú¹® ¼öÁý±â
+
+rem ---------------------------------------------------------------
+rem  1) Python 3.10 ÀÌ»ó Ã£±â (¾øÀ¸¸é winget À¸·Î ÀÚµ¿ ¼³Ä¡)
+rem ---------------------------------------------------------------
+call :find_python
+if not defined PYEXE (
+  echo Python ÀÌ ¾ø¾î ÀÚµ¿À¸·Î ¼³Ä¡ÇÕ´Ï´Ù. 1~3ºÐ Á¤µµ °É¸³´Ï´Ù...
+  echo ^(¼³Ä¡ Çã¿ë Ã¢ÀÌ ¶ß¸é '¿¹' ¸¦ ´­·¯ÁÖ¼¼¿ä^)
+  winget install -e --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements
+  call :find_python
 )
-call .venv\Scripts\activate.bat
-python -m pip install -q -r requirements.txt
-if not exist .env copy .env.example .env > nul
-python -m jisikin serve
+if not defined PYEXE (
+  winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
+  call :find_python
+)
+if not defined PYEXE (
+  echo.
+  echo [¾È³»] Python ÀÚµ¿ ¼³Ä¡¿¡ ½ÇÆÐÇß½À´Ï´Ù.
+  echo ¿­¸®´Â ÆäÀÌÁö¿¡¼­ Python À» ¼³Ä¡ÇØ ÁÖ¼¼¿ä.
+  echo ¼³Ä¡ Ã¹ È­¸é ¸Ç ¾Æ·¡ "Add python.exe to PATH" ¸¦ ²À Ã¼Å©ÇÑ µÚ Install Now ¸¦ ´©¸£¼¼¿ä.
+  echo ¼³Ä¡°¡ ³¡³ª¸é ÀÌ ÆÄÀÏ^(start.bat^)À» ´Ù½Ã ½ÇÇàÇÏ¼¼¿ä.
+  start "" https://www.python.org/downloads/
+  pause
+  exit /b 1
+)
+
+rem ---------------------------------------------------------------
+rem  2) °¡»óÈ¯°æ + ÆÐÅ°Áö ¼³Ä¡ (Ã³À½ ÇÑ ¹ø)
+rem ---------------------------------------------------------------
+if not exist ".venv\Scripts\python.exe" (
+  echo Ã³À½ ½ÇÇà: ÇÊ¿äÇÑ ÇÁ·Î±×·¥À» ¼³Ä¡ÇÕ´Ï´Ù. 1~2ºÐ Á¤µµ °É¸³´Ï´Ù...
+  "%PYEXE%" %PYARGS% -m venv .venv
+  if errorlevel 1 goto :fail
+)
+".venv\Scripts\python.exe" -m pip install -q --disable-pip-version-check -r requirements.txt
+if errorlevel 1 goto :fail
+if not exist ".env" copy ".env.example" ".env" > nul
+
+rem ---------------------------------------------------------------
+rem  3) ½ÇÇà (ÀÌ Ã¢À» ´ÝÀ¸¸é ÇÁ·Î±×·¥ÀÌ Á¾·áµË´Ï´Ù)
+rem ---------------------------------------------------------------
+".venv\Scripts\python.exe" -m jisikin serve
 pause
+exit /b 0
+
+:fail
+echo.
+echo [¿À·ù] ¼³Ä¡ Áß ¹®Á¦°¡ »ý°å½À´Ï´Ù. ÀÎÅÍ³Ý ¿¬°áÀ» È®ÀÎÇÏ°í ´Ù½Ã ½ÇÇàÇØ ÁÖ¼¼¿ä.
+echo °è¼Ó ¾È µÇ¸é ÀÌ Ã¢ÀÇ ³»¿ëÀ» Ä¸Ã³ÇØ¼­ ¾Ë·ÁÁÖ¼¼¿ä.
+pause
+exit /b 1
+
+rem Python 3.10+ À» Ã£¾Æ PYEXE / PYARGS ¿¡ ³Ö´Â´Ù
+:find_python
+set "PYEXE="
+set "PYARGS="
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" > nul 2>&1
+if not errorlevel 1 (
+  set "PYEXE=python"
+  exit /b 0
+)
+py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" > nul 2>&1
+if not errorlevel 1 (
+  set "PYEXE=py"
+  set "PYARGS=-3"
+  exit /b 0
+)
+for /d %%D in ("%LOCALAPPDATA%\Programs\Python\Python3*" "%ProgramFiles%\Python3*") do (
+  if exist "%%~D\python.exe" (
+    "%%~D\python.exe" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" > nul 2>&1
+    if not errorlevel 1 set "PYEXE=%%~D\python.exe"
+  )
+)
+exit /b 0

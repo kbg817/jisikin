@@ -96,3 +96,46 @@ def test_collect_trigger(client, app_state, monkeypatch):
     monkeypatch.setattr(app_state, "run_collection", lambda: calls.append(1))
     r = client.post("/api/collect", json={}, headers=H).get_json()
     assert r["started"] is True
+
+
+def test_save_keys_from_browser(client, app_state, tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    app_state.env_path = env_path
+    monkeypatch.setattr(app_state, "trigger", lambda: True)
+    r = client.post(
+        "/settings/keys",
+        data={"csrf": _csrf(client), "NAVER_CLIENT_ID": " abcID123 ", "NAVER_CLIENT_SECRET": "sec9876", "ANTHROPIC_API_KEY": ""},
+    )
+    assert r.status_code == 302 and "keys_saved=1" in r.headers["Location"]
+    text = env_path.read_text(encoding="utf-8")
+    assert "NAVER_CLIENT_ID=abcID123" in text and "NAVER_CLIENT_SECRET=sec9876" in text
+    assert "# 네이버 검색 API" in text  # .env.example 의 안내 주석 유지
+    import os
+
+    assert os.environ["NAVER_CLIENT_ID"] == "abcID123"
+    page = client.get("/settings").get_data(as_text=True)
+    assert "abcID123" not in page and "저장됨 ••••D123" in page
+    assert client.get("/api/meta").get_json()["mode"] == "api"  # 재시작 없이 바로 API 모드
+
+    # 빈 칸은 유지, '삭제' 는 지움
+    client.post("/settings/keys", data={"csrf": _csrf(client), "NAVER_CLIENT_SECRET": "삭제"})
+    text = env_path.read_text(encoding="utf-8")
+    assert "NAVER_CLIENT_ID=abcID123" in text and "NAVER_CLIENT_SECRET=\n" in text
+    assert "NAVER_CLIENT_SECRET" not in os.environ
+
+
+def test_save_keys_rejects_spaces_and_csrf(client, app_state, tmp_path):
+    app_state.env_path = tmp_path / ".env"
+    assert client.post("/settings/keys", data={"NAVER_CLIENT_ID": "x"}).status_code == 403
+    r = client.post("/settings/keys", data={"csrf": _csrf(client), "NAVER_CLIENT_ID": "abc def"})
+    assert "key_error" in r.headers["Location"]
+    assert not (tmp_path / ".env").exists()
+
+
+def test_diagnose_endpoint(client, monkeypatch):
+    import jisikin.web as web
+
+    monkeypatch.setattr(web, "run_diagnostics", lambda cfg: (False, ["[오류] 검색 실패: 테스트"]))
+    assert client.post("/api/diagnose", json={}).status_code == 403
+    r = client.post("/api/diagnose", json={}, headers=H).get_json()
+    assert r == {"ok": False, "lines": ["[오류] 검색 실패: 테스트"]}

@@ -93,7 +93,7 @@ def collect(
         summary.queries = len(queries)
         if mode == "api" and not client.credentials:
             summary.errors.append(
-                "source: api 로 설정되어 있지만 네이버 API 키가 없습니다. .env 파일을 확인하세요."
+                "source: api 로 설정되어 있지만 네이버 API 키가 없습니다. [설정] > API 키를 확인하세요."
             )
             queries = []
         search_fails = 0
