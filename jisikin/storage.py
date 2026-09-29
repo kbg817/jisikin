@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS questions (
     draft             TEXT,
     draft_at          TEXT,
     views             INTEGER,
-    in_feed           INTEGER NOT NULL DEFAULT 1   -- 1: 새 질문 수집으로 찾음, 0: 상위노출 확인으로만 찾음
+    in_feed           INTEGER NOT NULL DEFAULT 1,  -- 1: 새 질문 수집으로 찾음, 0: 상위노출 확인으로만 찾음
+    status_by         TEXT                         -- 상태를 마지막으로 바꾼 직원 아이디
 );
 CREATE INDEX IF NOT EXISTS idx_q_product ON questions(product, status);
 CREATE INDEX IF NOT EXISTS idx_q_first_seen ON questions(first_seen);
@@ -80,6 +81,46 @@ CREATE TABLE IF NOT EXISTS runs (
     new_relevant  INTEGER DEFAULT 0,
     details       INTEGER DEFAULT 0,
     errors        TEXT NOT NULL DEFAULT '[]'
+);
+
+-- 직원 계정 (관리자 계정은 서버 환경변수로 따로 둔다)
+CREATE TABLE IF NOT EXISTS users (
+    username      TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL
+);
+
+-- 누가 언제 어떤 글을 답변완료/제외/열어봄 했는지
+CREATE TABLE IF NOT EXISTS activity (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_id    TEXT NOT NULL,
+    username  TEXT NOT NULL DEFAULT '',
+    status    TEXT NOT NULL,
+    at        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_activity_at ON activity(at);
+
+-- 간단한 설정값 저장소 (메인 키워드 등)
+CREATE TABLE IF NOT EXISTS kv (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
+
+-- 메인 키워드에서 자동으로 만든 상위노출 검색어
+CREATE TABLE IF NOT EXISTS auto_keywords (
+    product     TEXT NOT NULL,
+    keyword     TEXT NOT NULL,
+    seed        TEXT NOT NULL DEFAULT '',
+    sources     TEXT NOT NULL DEFAULT '[]',
+    pc          INTEGER,
+    mobile      INTEGER,
+    score       REAL NOT NULL DEFAULT 0,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    user_set    INTEGER NOT NULL DEFAULT 0,   -- 1: 사람이 직접 켜고/끔 → 다시 생성해도 유지
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (product, keyword)
 );
 """
 
@@ -267,14 +308,153 @@ class Store:
             row = c.execute("SELECT * FROM questions WHERE doc_id=?", (doc_id,)).fetchone()
         return _row_to_dict(row) if row else None
 
-    def set_status(self, doc_id: str, status: str) -> bool:
+    def set_status(self, doc_id: str, status: str, by: str = "", now: datetime | None = None) -> bool:
         if status not in STATUSES:
             raise ValueError(status)
+        now_s = iso(now or now_kst())
         with self._conn() as c:
-            return c.execute(
-                "UPDATE questions SET status=?, status_changed_at=? WHERE doc_id=?",
-                (status, iso(now_kst()), doc_id),
+            changed = c.execute(
+                "UPDATE questions SET status=?, status_changed_at=?, status_by=? WHERE doc_id=?",
+                (status, now_s, by or None, doc_id),
             ).rowcount > 0
+            if changed:
+                c.execute("INSERT INTO activity (doc_id, username, status, at) VALUES (?,?,?,?)", (doc_id, by, status, now_s))
+            return changed
+
+    def answer_stats(self, now: datetime | None = None) -> dict[str, dict[str, int]]:
+        """직원별 답변완료 수: {username: {today, week, total}} ('' = 로그인 없이 사용)"""
+        now = now or now_kst()
+        today = iso(now.replace(hour=0, minute=0, second=0, microsecond=0))
+        week = iso((now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0))
+        out: dict[str, dict[str, int]] = {}
+        with self._conn() as c:
+            # 같은 글을 여러 번 답변완료로 눌러도 한 번만 센다 (마지막 기록 기준)
+            rows = c.execute(
+                """SELECT a.username, a.at FROM activity a
+                   JOIN questions q ON q.doc_id = a.doc_id AND q.status = 'answered'
+                   WHERE a.status = 'answered'
+                     AND a.id = (SELECT MAX(id) FROM activity b WHERE b.doc_id = a.doc_id AND b.status = 'answered')"""
+            ).fetchall()
+        for r in rows:
+            s = out.setdefault(r["username"], {"today": 0, "week": 0, "total": 0})
+            s["total"] += 1
+            if r["at"] >= week:
+                s["week"] += 1
+            if r["at"] >= today:
+                s["today"] += 1
+        return out
+
+    # ------------------------------------------------------------ 직원 계정
+
+    def list_users(self) -> list[dict]:
+        with self._conn() as c:
+            return [dict(r) for r in c.execute("SELECT username, name, active, created_at FROM users ORDER BY created_at")]
+
+    def get_user(self, username: str) -> dict | None:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        return dict(row) if row else None
+
+    def save_user(self, username: str, name: str, password_hash: str | None = None, active: bool = True) -> None:
+        with self._conn() as c:
+            if c.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
+                if password_hash:
+                    c.execute("UPDATE users SET password_hash=? WHERE username=?", (password_hash, username))
+                c.execute("UPDATE users SET name=?, active=? WHERE username=?", (name, int(active), username))
+            else:
+                if not password_hash:
+                    raise ValueError("password required")
+                c.execute(
+                    "INSERT INTO users (username, name, password_hash, active, created_at) VALUES (?,?,?,?,?)",
+                    (username, name, password_hash, int(active), iso(now_kst())),
+                )
+
+    def delete_user(self, username: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM users WHERE username=?", (username,))
+
+    # ------------------------------------------------------------ 설정값 / 자동 검색어
+
+    def kv_get(self, key: str, default=None):
+        with self._conn() as c:
+            row = c.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def kv_set(self, key: str, value) -> None:
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO kv (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, json.dumps(value, ensure_ascii=False)),
+            )
+
+    def auto_keywords(self, product: str | None = None, enabled_only: bool = False) -> list[dict]:
+        sql, args = "SELECT * FROM auto_keywords WHERE 1=1", []
+        if product:
+            sql += " AND product=?"
+            args.append(product)
+        if enabled_only:
+            sql += " AND enabled=1"
+        sql += " ORDER BY product, user_set DESC, score DESC, keyword"
+        with self._conn() as c:
+            rows = [dict(r) for r in c.execute(sql, args)]
+        for r in rows:
+            r["sources"] = json.loads(r["sources"] or "[]")
+        return rows
+
+    def replace_auto_keywords(self, product: str, candidates: list[dict], max_enabled: int) -> None:
+        """새로 만든 후보로 교체. 사람이 직접 켜고/끈 검색어는 그 선택을 유지한다.
+
+        candidates: 점수 높은 순 [{keyword, seed, sources, pc, mobile, score}]
+        """
+        now_s = iso(now_kst())
+        with self._conn() as c:
+            kept = {
+                r["keyword"]: dict(r)
+                for r in c.execute("SELECT * FROM auto_keywords WHERE product=? AND user_set=1", (product,))
+            }
+            c.execute("DELETE FROM auto_keywords WHERE product=? AND user_set=0", (product,))
+            auto_on = 0
+            for cand in candidates:
+                kw = cand["keyword"]
+                if kw in kept:
+                    c.execute(
+                        "UPDATE auto_keywords SET seed=?, sources=?, pc=?, mobile=?, score=?, updated_at=? WHERE product=? AND keyword=?",
+                        (cand.get("seed", ""), json.dumps(cand.get("sources", []), ensure_ascii=False), cand.get("pc"),
+                         cand.get("mobile"), cand.get("score", 0), now_s, product, kw),
+                    )
+                    continue
+                enabled = auto_on < max_enabled
+                auto_on += int(enabled)
+                c.execute(
+                    """INSERT INTO auto_keywords (product, keyword, seed, sources, pc, mobile, score, enabled, user_set, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,0,?)""",
+                    (product, kw, cand.get("seed", ""), json.dumps(cand.get("sources", []), ensure_ascii=False),
+                     cand.get("pc"), cand.get("mobile"), cand.get("score", 0), int(enabled), now_s),
+                )
+
+    def set_auto_keyword(self, product: str, keyword: str, enabled: bool, sources: list[str] | None = None) -> None:
+        """사람이 켜고/끄거나 직접 추가한 검색어 (다시 생성해도 유지)."""
+        now_s = iso(now_kst())
+        with self._conn() as c:
+            if c.execute("SELECT 1 FROM auto_keywords WHERE product=? AND keyword=?", (product, keyword)).fetchone():
+                c.execute(
+                    "UPDATE auto_keywords SET enabled=?, user_set=1, updated_at=? WHERE product=? AND keyword=?",
+                    (int(enabled), now_s, product, keyword),
+                )
+            else:
+                c.execute(
+                    """INSERT INTO auto_keywords (product, keyword, sources, score, enabled, user_set, updated_at)
+                       VALUES (?,?,?,0,?,1,?)""",
+                    (product, keyword, json.dumps(sources or ["직접"], ensure_ascii=False), int(enabled), now_s),
+                )
+
+    def exposure_counts(self) -> dict[tuple[str, str], int]:
+        """(제품, 검색어) → 최근 확인에서 노출된 지식iN 글 수 (성공한 확인만)."""
+        out: dict[tuple[str, str], int] = {}
+        for g in self.latest_exposures():
+            if any(not s["error"] for s in g["sources"].values()):
+                out[(g["product"], g["keyword"])] = len(g["posts"])
+        return out
 
     def set_draft(self, doc_id: str, draft: str) -> None:
         with self._conn() as c:
@@ -553,6 +733,8 @@ def _migrate(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE questions ADD COLUMN views INTEGER")
     if "in_feed" not in cols:
         c.execute("ALTER TABLE questions ADD COLUMN in_feed INTEGER NOT NULL DEFAULT 1")
+    if "status_by" not in cols:
+        c.execute("ALTER TABLE questions ADD COLUMN status_by TEXT")
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:

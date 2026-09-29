@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}검색어 관리 - 지식iN 질문 수집기{% endblock %}
+{% block status %}검색어 관리 · 상위노출 글을 확인할 검색어{% endblock %}
+{% block body %}
+<div class="wrap">
+  <div class="panel">
+    <h2>메인 키워드 → 세부 검색어 자동 생성</h2>
+    <p class="muted" style="margin:0 0 8px;font-size:14px">
+      메인 키워드(예: <b>건선</b>)만 넣으면 사람들이 실제로 검색하는 세부 검색어(예: 인천 건선, 건선 원인, 두피 건선 샴푸 …)를
+      찾아서 점수가 높은 순으로 켜 둡니다. 켜진 검색어는 <a href="/">[상위노출 글]</a>에서 자동으로 확인합니다.
+      일주일마다 새로 생성하며, 직접 켜고 끈 검색어는 그대로 유지됩니다.
+    </p>
+    <div class="kw-sources" id="kw-sources"></div>
+  </div>
+
+  <nav class="tabs" id="kw-tabs"></nav>
+  <div id="kw-body"><div class="empty">불러오는 중…</div></div>
+</div>
+<div class="toast" id="toast"></div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='keywords.js') }}"></script>{% endblock %}

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import threading
 import webbrowser
@@ -28,27 +29,58 @@ def _utf8_console() -> None:
             pass
 
 
+def _make_server(app, host: str, port: int):
+    """waitress(운영용 서버)가 있으면 쓰고, 없으면 Flask 기본 서버. 포트가 사용 중이면 None."""
+    try:
+        from waitress import create_server
+
+        logging.getLogger("waitress").setLevel(logging.WARNING)
+        try:
+            server = create_server(app, host=host, port=port, threads=8)
+        except OSError:
+            return None
+        return server.run
+    except ImportError:
+        logging.getLogger("werkzeug").setLevel(logging.WARNING)
+        try:
+            server = make_server(host, port, app, threaded=True)
+        except (OSError, SystemExit):  # werkzeug 는 포트가 사용 중이면 SystemExit 을 낸다
+            return None
+        return server.serve_forever
+
+
 def cmd_serve(args) -> int:
+    from .auth import auth_enabled
     from .web import AppState, create_app
 
-    state = AppState(config_mod.CONFIG_PATH, config_mod.DB_PATH)
-    app = create_app(state)
-    port = args.port or state.cfg.settings.port
+    host = args.host or os.environ.get("JISIKIN_HOST", "").strip() or "127.0.0.1"
+    public = host not in ("127.0.0.1", "localhost", "::1")
+    if public and not auth_enabled():
+        print(
+            "외부에서 접속할 수 있게 실행하려면 로그인 비밀번호가 필요합니다.\n"
+            "환경변수 JISIKIN_ADMIN_PASSWORD 에 관리자 비밀번호를 넣어주세요.",
+            file=sys.stderr,
+        )
+        return 1
+
+    state = AppState(config_mod.CONFIG_PATH, config_mod.DB_PATH, data_dir=config_mod.DATA_DIR)
+    app = create_app(state, behind_proxy=public)
+    port = args.port or int(os.environ.get("PORT") or 0) or state.cfg.settings.port
     url = f"http://127.0.0.1:{port}"
-    # 개발용 서버 경고/요청 로그 없이 조용히 실행 (이 PC 에서만 접속 가능: 127.0.0.1)
-    logging.getLogger("werkzeug").setLevel(logging.WARNING)
-    try:
-        server = make_server("127.0.0.1", port, app, threaded=True)
-    except (OSError, SystemExit):  # werkzeug 는 포트가 사용 중이면 SystemExit 을 낸다
+    run = _make_server(app, host, port)
+    if run is None:
         print(f"포트 {port} 가 이미 사용 중입니다. 이미 실행 중이 아닌지 확인하거나 config.yaml 의 port 를 바꾸세요.")
         return 1
-    print(f"\n  지식iN 질문 수집기 대시보드: {url}\n  (종료: Ctrl+C)\n", flush=True)
+    if public:
+        print(f"\n  지식iN 질문 수집기 서버 실행 중 ({host}:{port}) — 로그인 필요\n", flush=True)
+    else:
+        print(f"\n  지식iN 질문 수집기 대시보드: {url}\n  (종료: Ctrl+C)\n", flush=True)
     if not args.no_collect:
         state.start_scheduler()
-    if not args.no_browser:
+    if not args.no_browser and not public:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:
-        server.serve_forever()
+        run()
     finally:
         state.stop()
     return 0
@@ -105,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("serve", help="대시보드 실행 (기본)")
     p.add_argument("--port", type=int, default=0)
+    p.add_argument("--host", default="", help="서버로 쓸 때 0.0.0.0 (로그인 비밀번호 필요)")
     p.add_argument("--no-browser", action="store_true", help="브라우저 자동으로 열지 않기")
     p.add_argument("--no-collect", action="store_true", help="자동 수집 끄기 (화면만)")
     p.set_defaults(func=cmd_serve)

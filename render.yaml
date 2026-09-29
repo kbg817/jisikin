@@ -1,0 +1,19 @@
+# Render 블루프린트 — render.com 에서 [New] → [Blueprint] 로 이 저장소를 고르면 아래대로 서버가 만들어집니다.
+services:
+  - type: web
+    name: jisikin
+    runtime: docker
+    plan: starter            # 항상 켜져 있는 유료 플랜 (영구 디스크는 유료 플랜에서만 가능)
+    region: singapore        # 한국에서 가장 가까운 지역
+    healthCheckPath: /healthz
+    disk:
+      name: jisikin-data
+      mountPath: /app/data   # 설정·키·DB 저장 (재배포해도 유지)
+      sizeGB: 1
+    envVars:
+      - key: JISIKIN_ADMIN_PASSWORD   # 관리자 로그인 비밀번호 (만들 때 직접 입력)
+        sync: false
+      - key: JISIKIN_ADMIN_USER       # 관리자 아이디
+        value: admin
+      - key: JISIKIN_SECRET_KEY       # 로그인 쿠키 서명용 (자동 생성)
+        generateValue: true

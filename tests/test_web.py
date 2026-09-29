@@ -135,7 +135,7 @@ def test_save_keys_rejects_spaces_and_csrf(client, app_state, tmp_path):
 def test_diagnose_endpoint(client, monkeypatch):
     import jisikin.web as web
 
-    monkeypatch.setattr(web, "run_diagnostics", lambda cfg: (False, ["[오류] 검색 실패: 테스트"]))
+    monkeypatch.setattr(web, "run_diagnostics", lambda cfg, **kw: (False, ["[오류] 검색 실패: 테스트"]))
     assert client.post("/api/diagnose", json={}).status_code == 403
     r = client.post("/api/diagnose", json={}, headers=H).get_json()
     assert r == {"ok": False, "lines": ["[오류] 검색 실패: 테스트"]}

@@ -13,6 +13,7 @@ HTML 구조는 네이버가 예고 없이 바꿀 수 있으므로, 특정 class 
 from __future__ import annotations
 
 import html as html_lib
+import json
 import re
 import threading
 import time
@@ -37,6 +38,7 @@ WEB_SEARCH_URL = "https://kin.naver.com/search/list.naver"
 DETAIL_URL = "https://kin.naver.com/qna/detail.naver"
 INTEGRATED_PC_URL = "https://search.naver.com/search.naver"
 INTEGRATED_MOBILE_URL = "https://m.search.naver.com/search.naver"
+AUTOCOMPLETE_URL = "https://ac.search.naver.com/nx/ac"
 
 # 질문 제목이 아닌 링크 문구 (같은 질문으로 가는 '답변하기' 버튼 등)
 _GENERIC_LINK_TEXT = {"답변하기", "답변", "질문", "더보기", "원문보기", "바로가기", "댓글", "공유", "신고"}
@@ -444,6 +446,15 @@ class NaverClient:
         )
         return extract_questions(html, INTEGRATED_PC_URL)
 
+    def autocomplete(self, query: str) -> list[str]:
+        """네이버 검색창 자동완성 목록 (사람들이 실제로 많이 치는 검색어)."""
+        params = {
+            "q": query, "con": 1, "frm": "nv", "ans": 2, "r_format": "json", "r_enc": "UTF-8",
+            "r_unicode": 0, "t_koreng": 1, "run": 2, "rev": 4, "q_enc": "UTF-8", "st": 100,
+        }
+        text = self._get_html(AUTOCOMPLETE_URL, params=params, site="네이버 자동완성")
+        return parse_autocomplete(text)
+
     def search_kin_ranked(self, query: str, count: int = 10) -> list[RawQuestion]:
         """지식iN 탭 정확도순 상위 글. (API 키가 있으면 API, 없으면 지식iN 검색 화면)"""
         if self.credentials:
@@ -469,6 +480,37 @@ class NaverClient:
         if not r.encoding or r.encoding.lower() == "iso-8859-1":
             r.encoding = r.apparent_encoding or "utf-8"
         return r.text
+
+
+def parse_autocomplete(text: str) -> list[str]:
+    """자동완성 응답(JSON, 콜백 감싼 형태 포함)에서 검색어만 뽑는다. 형식이 조금 바뀌어도 버티도록 방어적으로."""
+    text = (text or "").strip()
+    m = re.match(r"^[\w$.]+\((.*)\)\s*;?\s*$", text, re.S)  # _jsonp_0({...}) 형태
+    if m:
+        text = m.group(1)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    out: list[str] = []
+
+    def add(s):
+        s = clean_text(str(s))
+        if s and s not in out and not s.isdigit():
+            out.append(s)
+
+    items = data.get("items") if isinstance(data, dict) else data
+    for group in items or []:
+        if not isinstance(group, list):
+            continue
+        for entry in group:
+            if isinstance(entry, list) and entry and isinstance(entry[0], str):
+                add(entry[0])
+            elif isinstance(entry, dict):
+                add(entry.get("keyword") or entry.get("value") or "")
+            elif isinstance(entry, str):
+                add(entry)
+    return out
 
 
 def parse_api_items(items: list[dict]) -> list[RawQuestion]:

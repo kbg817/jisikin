@@ -10,13 +10,25 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.yaml"
 EXAMPLE_CONFIG_PATH = ROOT / "config.example.yaml"
-ENV_PATH = ROOT / ".env"
 EXAMPLE_ENV_PATH = ROOT / ".env.example"
-ENV_KEYS = ("NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET", "ANTHROPIC_API_KEY")
-DATA_DIR = ROOT / "data"
+
+# 서버(클라우드)에서는 JISIKIN_DATA_DIR 한 곳(영구 디스크)에 설정·키·DB 를 모두 둔다.
+# PC 에서는 기존처럼 프로그램 폴더의 config.yaml / .env / data/jisikin.db 를 쓴다.
+_SERVER_DATA_DIR = os.environ.get("JISIKIN_DATA_DIR", "").strip()
+DATA_DIR = Path(_SERVER_DATA_DIR) if _SERVER_DATA_DIR else ROOT / "data"
+CONFIG_PATH = DATA_DIR / "config.yaml" if _SERVER_DATA_DIR else ROOT / "config.yaml"
+ENV_PATH = DATA_DIR / ".env" if _SERVER_DATA_DIR else ROOT / ".env"
 DB_PATH = DATA_DIR / "jisikin.db"
+
+ENV_KEYS = (
+    "NAVER_CLIENT_ID",
+    "NAVER_CLIENT_SECRET",
+    "ANTHROPIC_API_KEY",
+    "NAVER_AD_CUSTOMER_ID",
+    "NAVER_AD_ACCESS_LICENSE",
+    "NAVER_AD_SECRET_KEY",
+)
 
 DEFAULT_AI_MODEL = "claude-opus-5-5"
 
@@ -277,6 +289,7 @@ def parse_config(text: str) -> AppConfig:
 
 def ensure_config_file(path: Path = CONFIG_PATH) -> Path:
     if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(EXAMPLE_CONFIG_PATH, path)
     return path
 
@@ -346,6 +359,7 @@ def save_env_values(values: dict[str, str], path: Path = ENV_PATH) -> None:
         else:
             out.append(line)
     out.extend(f"{k}={v}" for k, v in remaining.items())
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
     for key, value in clean.items():
@@ -368,3 +382,9 @@ def naver_credentials() -> tuple[str, str] | None:
     cid = os.environ.get("NAVER_CLIENT_ID", "").strip()
     secret = os.environ.get("NAVER_CLIENT_SECRET", "").strip()
     return (cid, secret) if cid and secret else None
+
+
+def searchad_credentials() -> tuple[str, str, str] | None:
+    """네이버 검색광고 API (월간 검색수 조회용, 선택)."""
+    values = tuple(os.environ.get(k, "").strip() for k in ("NAVER_AD_CUSTOMER_ID", "NAVER_AD_ACCESS_LICENSE", "NAVER_AD_SECRET_KEY"))
+    return values if all(values) else None  # type: ignore[return-value]

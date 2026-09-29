@@ -1,20 +1,7 @@
-<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>지식iN 질문 수집기</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2303c75a'/%3E%3Ctext x='16' y='23' font-size='20' font-family='Arial' font-weight='700' fill='white' text-anchor='middle'%3EQ%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-<header class="top">
-  <h1><a href="/">지식iN 질문 수집기</a></h1>
-  <div class="run-status" id="run-status">불러오는 중…</div>
-  <button class="btn primary" id="collect-btn">지금 수집</button>
-  <a class="btn" href="/settings">설정</a>
-</header>
-
+{% extends "base.html" %}
+{% block status %}불러오는 중…{% endblock %}
+{% block actions %}<button class="btn primary" id="collect-btn">지금 수집</button>{% endblock %}
+{% block body %}
 <div class="wrap">
   <nav class="views" id="views">
     <button class="view active" data-view="feed">새 질문 <span class="muted">실시간</span></button>
@@ -50,6 +37,5 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="{{ url_for('static', filename='app.js') }}"></script>
-</body>
-</html>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='app.js') }}"></script>{% endblock %}

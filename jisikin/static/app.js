@@ -28,10 +28,19 @@ async function api(path, body) {
     body: JSON.stringify(body),
   };
   const res = await fetch(path, opts);
+  if (res.status === 401) {
+    location.href = "/login?next=" + encodeURIComponent(location.pathname);
+    throw new Error("로그인이 필요합니다");
+  }
   let data = {};
   try { data = await res.json(); } catch (e) { /* 무시 */ }
   if (!res.ok) throw new Error(data.error || `요청 실패 (${res.status})`);
   return data;
+}
+
+function personName(username) {
+  if (!username) return "";
+  return meta?.people?.[username] || username;
 }
 
 function esc(s) {
@@ -113,7 +122,9 @@ function renderStatus() {
   } else parts.push("아직 수집 기록이 없습니다");
   if (!meta.running && meta.next_run_at) parts.push(`다음 수집 ${untilTime(meta.next_run_at)}`);
   if (!meta.interval) parts.push("자동 수집 꺼짐");
-  parts.push(`오늘 답변 ${meta.counts.answered_today}건`);
+  const today = meta.answer_stats.reduce((a, s) => a + s.today, 0);
+  const who = meta.auth ? meta.answer_stats.filter((s) => s.today).map((s) => `${esc(s.name)} ${s.today}`).join(", ") : "";
+  parts.push(`오늘 답변 ${today}건${who ? ` (${who})` : ""}`);
   $("#run-status").innerHTML = parts.join(" · ");
   const btn = $("#collect-btn");
   const collecting = meta.running && meta.running_kind === "collect";
@@ -247,7 +258,14 @@ function cardHtml(q) {
 }
 
 function statusLabel(q) {
-  return q.status === "answered" ? "<b>답변완료</b>" : q.status === "skipped" ? "<b>제외함</b>" : "";
+  const by = meta.auth && q.status_by ? ` · ${esc(personName(q.status_by))}` : "";
+  if (q.status === "answered") return `<b>답변완료${by}</b>`;
+  if (q.status === "skipped") return `<b>제외함${by}</b>`;
+  // 다른 사람이 이미 열어본 글: 같은 질문에 두 명이 답하지 않도록 표시
+  if (q.status === "opened" && meta.auth && q.status_by && q.status_by !== meta.user.username) {
+    return `<span class="badge busy" title="${esc(personName(q.status_by))} 님이 이 글을 열어봤습니다">${esc(personName(q.status_by))} 확인 중</span>`;
+  }
+  return "";
 }
 
 function answerBadge(q) {
@@ -349,7 +367,10 @@ function exposureCardHtml(q) {
 function renderExposure(groups) {
   const list = $("#list");
   if (!meta.exposure.keywords) {
-    list.innerHTML = `<div class="empty">상위노출을 확인할 검색어가 없습니다.<br><span class="muted"><a href="/settings">설정</a>에서 제품별 <code>exposure</code> 에 검색어(예: 인천 건선)를 넣어주세요.</span></div>`;
+    const how = meta.user.role === "admin"
+      ? '<a href="/keywords">검색어 관리</a>에서 메인 키워드(예: 건선)를 넣어주세요.'
+      : "관리자에게 메인 키워드 등록을 요청하세요.";
+    list.innerHTML = `<div class="empty">상위노출을 확인할 검색어가 없습니다.<br><span class="muted">${how}</span></div>`;
     return;
   }
   if (!groups.length) {

@@ -12,10 +12,32 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .config import AppConfig, naver_credentials
+from .config import AppConfig, Product, naver_credentials
 from .matcher import Matcher
 from .naver import NaverClient, NaverError
+from .searchad import compact
 from .storage import Store
+
+
+def all_targets(cfg: AppConfig, store: Store | None) -> list[tuple[Product, str]]:
+    """확인할 (제품, 검색어): 설정 파일의 검색어 + 메인 키워드로 자동 생성해 켜 둔 검색어."""
+    out: list[tuple[Product, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(p: Product, kw: str) -> None:
+        key = (p.id, compact(kw))
+        if key not in seen:
+            seen.add(key)
+            out.append((p, kw))
+
+    for p, kw in cfg.exposure_targets():
+        add(p, kw)
+    if store is not None:
+        for row in store.auto_keywords(enabled_only=True):
+            p = cfg.product(row["product"])
+            if p:
+                add(p, row["keyword"])
+    return out
 
 MAX_FAILS = 3              # 연속 실패하면 이번 확인은 중단 (인터넷 끊김, 차단 등)
 MAX_DETAILS_PER_CHECK = 150
@@ -50,7 +72,7 @@ def check_exposure(
     started = time.monotonic()
     s = cfg.settings
     summary = ExposureSummary()
-    targets = cfg.exposure_targets()
+    targets = all_targets(cfg, store)
     summary.keywords = len(targets)
     if not targets:
         return summary

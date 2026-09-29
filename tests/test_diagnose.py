@@ -31,6 +31,11 @@ class Client:
     def fetch_detail(self, url):
         return self.detail
 
+    def autocomplete(self, query):
+        if self.fail:
+            raise NaverError("네이버 자동완성 연결 실패: ProxyError")
+        return [query, f"{query} 추천", f"{query} 원인"]
+
 
 def test_all_good(example_cfg):
     d = QuestionDetail(title="t", body="b", answer_count=1, asked_at=datetime(2026, 9, 29, 10, 0, tzinfo=KST), reward=10)
@@ -42,6 +47,18 @@ def test_all_good(example_cfg):
     first_kw = example_cfg.exposure_targets()[0][1]
     assert f"상위노출 '{first_kw}' 통합검색 PC: 지식iN 글 1개" in text
     assert client.integrated_calls == [(first_kw, "pc"), (first_kw, "mobile")]
+    assert "[OK] 네이버 자동완성 '신점': 3개" in text
+    assert "[--] 검색광고 API: 키 없음" in text
+
+
+def test_searchad_check(example_cfg):
+    class Ad:
+        def keyword_stats(self, hints):
+            return [{"keyword": "신점", "pc": 1200, "mobile": 9800}]
+
+    d = QuestionDetail(title="t", body="b", answer_count=1, asked_at=datetime(2026, 9, 29, tzinfo=KST))
+    ok, lines = run_diagnostics(example_cfg, Client(detail=d), ad_client=Ad())
+    assert any("[OK] 검색광고 API: 연관 키워드 1개 (예: 신점 PC 1200 / 모바일 9800)" in line for line in lines)
 
 
 def test_partial_detail_is_flagged(example_cfg):

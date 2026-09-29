@@ -9,10 +9,18 @@ from . import config as config_mod
 from .collector import effective_interval, estimate_api_calls_per_day, resolve_mode
 from .config import AppConfig
 from .drafter import ai_status
+from .exposure import all_targets
 from .naver import NaverClient, NaverError
+from .searchad import SearchAdClient
+from .storage import Store
 
 
-def run_diagnostics(cfg: AppConfig, client: NaverClient | None = None) -> tuple[bool, list[str]]:
+def run_diagnostics(
+    cfg: AppConfig,
+    client: NaverClient | None = None,
+    store: Store | None = None,
+    ad_client: SearchAdClient | None = None,
+) -> tuple[bool, list[str]]:
     ok = True
     lines = [f"지식iN 수집기 {__version__} / Python {platform.python_version()} / {platform.system()} {platform.release()}"]
     for p in cfg.products:
@@ -62,7 +70,7 @@ def run_diagnostics(cfg: AppConfig, client: NaverClient | None = None) -> tuple[
             ok = False
             lines.append(f"[오류] 상세 페이지: {e}")
 
-    targets = cfg.exposure_targets()
+    targets = all_targets(cfg, store)
     if targets:
         product, keyword = targets[0]
         for source, label in (("pc", "통합검색 PC"), ("mobile", "통합검색 모바일")):
@@ -79,8 +87,31 @@ def run_diagnostics(cfg: AppConfig, client: NaverClient | None = None) -> tuple[
                 ok = False
                 lines.append(f"[오류] 상위노출 '{keyword}' {label}: {e}")
 
+    # 검색어 자동 생성에 쓰는 자동완성 / 검색광고 API
+    sample = (cfg.products[0].keywords or [cfg.products[0].name])[0]
+    try:
+        sugg = client.autocomplete(sample)
+        lines.append(f"[{'OK' if sugg else '??'}] 네이버 자동완성 '{sample}': {len(sugg)}개 {' / '.join(sugg[:5])}")
+    except NaverError as e:
+        ok = False
+        lines.append(f"[오류] 네이버 자동완성: {e}")
+    creds = config_mod.searchad_credentials()
+    if ad_client is None and creds:
+        ad_client = SearchAdClient(*creds)
+    if ad_client:
+        try:
+            rows = ad_client.keyword_stats([sample])
+            top = rows[0] if rows else None
+            detail = f" (예: {top['keyword']} PC {top['pc']} / 모바일 {top['mobile']})" if top else ""
+            lines.append(f"[OK] 검색광고 API: 연관 키워드 {len(rows)}개{detail}")
+        except NaverError as e:
+            ok = False
+            lines.append(f"[오류] 검색광고 API: {e}")
+    else:
+        lines.append("[--] 검색광고 API: 키 없음 (없어도 동작, 있으면 월간 검색수로 검색어 순위를 매김)")
+
     ai_ok, reason = ai_status()
-    lines.append(f"[{'OK' if ai_ok else '--'}] AI 답변 초안: {reason}")
+    lines.append(f"[{'OK' if ai_ok else '--'}] AI (답변 초안 · 검색어 추천): {reason}")
     return ok, lines
 
 

@@ -58,16 +58,24 @@ def build_prompt(cfg: AppConfig, product: Product, question: dict) -> tuple[str,
 
 
 def generate_draft(cfg: AppConfig, product: Product, question: dict) -> str:
+    system, user = build_prompt(cfg, product, question)
+    text = ask_claude(cfg, system, user)
+    if not text:
+        raise DraftError("초안이 비어 있습니다. 다시 시도해 주세요.")
+    return text
+
+
+def ask_claude(cfg: AppConfig, system: str, user: str, effort: str | None = None) -> str:
+    """Claude 에 한 번 물어보고 답의 텍스트를 돌려준다. 실패하면 DraftError."""
     ok, reason = ai_status()
     if not ok:
         raise DraftError(reason)
     import anthropic
 
-    system, user = build_prompt(cfg, product, question)
     model = cfg.ai.model
     kwargs: dict = {}
     if not model.startswith("claude-haiku"):
-        kwargs["output_config"] = {"effort": cfg.ai.effort}
+        kwargs["output_config"] = {"effort": effort or cfg.ai.effort}
     if model in _FALLBACK_MODELS:
         # 안전 분류기가 요청을 거절하면 서버가 권장 모델로 자동 재시도
         kwargs["betas"] = ["server-side-fallback-2026-07-01"]
@@ -83,7 +91,7 @@ def generate_draft(cfg: AppConfig, product: Product, question: dict) -> str:
             **kwargs,
         )
     except anthropic.AuthenticationError as e:
-        raise DraftError("Claude API 키가 올바르지 않습니다. .env 의 ANTHROPIC_API_KEY 를 확인하세요.") from e
+        raise DraftError("Claude API 키가 올바르지 않습니다. [설정] > API 키를 확인하세요.") from e
     except anthropic.PermissionDeniedError as e:
         raise DraftError("이 API 키로는 해당 모델을 사용할 수 없습니다.") from e
     except anthropic.NotFoundError as e:
@@ -98,8 +106,5 @@ def generate_draft(cfg: AppConfig, product: Product, question: dict) -> str:
         raise DraftError("Claude API 에 연결할 수 없습니다. 인터넷 연결을 확인하세요.") from e
 
     if response.stop_reason == "refusal":
-        raise DraftError("AI 가 이 질문에 대한 초안 작성을 거절했습니다. 직접 작성해 주세요.")
-    text = "".join(b.text for b in response.content if b.type == "text").strip()
-    if not text:
-        raise DraftError("초안이 비어 있습니다. 다시 시도해 주세요.")
-    return text
+        raise DraftError("AI 가 이 요청을 거절했습니다. 직접 작성해 주세요.")
+    return "".join(b.text for b in response.content if b.type == "text").strip()

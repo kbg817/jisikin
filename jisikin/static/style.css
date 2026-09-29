@@ -191,11 +191,54 @@ textarea.config {
 .rk-down { color: #dc2626; }
 .rk-new { color: #2563eb; }
 .badge.hot { background: #ffedd5; color: #9a3412; font-weight: 600; }
+.badge.busy { background: #dbeafe; color: #1e40af; font-weight: 600; }
 .card.done { opacity: .6; }
 .empty.small { padding: 14px; font-size: 13px; background: var(--panel); border: 1px dashed var(--line); border-radius: 10px; text-align: left; }
 @media (prefers-color-scheme: dark) {
   .src.err { background: #450a0a; color: #fecaca; }
   .badge.hot { background: #431407; color: #fed7aa; }
+}
+
+/* 로그인 · 사용자 */
+header.top .btn.current { border-color: var(--text); font-weight: 600; }
+header.top form.me { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; }
+.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.panel.login { width: 100%; max-width: 360px; }
+.panel.login h1 { font-size: 20px; margin: 0 0 16px; }
+.panel.login label { display: block; font-size: 14px; margin-bottom: 10px; }
+.panel.login input { display: block; width: 100%; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; background: var(--bg); }
+.panel.login .btn { width: 100%; padding: 10px; margin-top: 6px; }
+.panel.login .muted { font-size: 12px; text-align: center; margin: 12px 0 0; }
+.users td, .users th { padding: 6px 6px; }
+.users tr.inactive td { color: var(--muted); }
+.user-actions form { display: flex; gap: 6px; flex-wrap: wrap; margin: 0; }
+.user-actions input, .add-user input { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--bg); min-width: 0; }
+.user-actions input { width: 120px; }
+.add-user { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.add-user input { flex: 1; min-width: 130px; padding: 6px 8px; }
+
+/* 검색어 관리 */
+.kw-sources { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 13px; }
+.kw-sources .src.on { background: #dcfce7; color: #166534; }
+.kw-form { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.kw-form label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.kw-form label:first-child { flex: 1; min-width: 220px; }
+.kw-form input { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); }
+.kw-form input[type=number] { width: 100px; }
+.kw-meta { flex-basis: 100%; font-size: 13px; }
+.kw-head2 { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.kw-head2 h2 { margin: 0; }
+.kw-add { display: flex; gap: 6px; }
+.kw-add input { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--bg); }
+.kw-table tr.off td { color: var(--muted); }
+.kw-table tr.off a { text-decoration: line-through; }
+.kw-table td { vertical-align: middle; }
+.table-wrap { overflow-x: auto; }
+.kw-config { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
+details.panel summary { cursor: pointer; font-size: 14px; }
+.err { color: #dc2626; }
+@media (prefers-color-scheme: dark) {
+  .kw-sources .src.on { background: #14532d; color: #bbf7d0; }
 }
 
 /* 좁은 화면 (휴대폰) */

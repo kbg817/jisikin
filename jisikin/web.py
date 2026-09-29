@@ -1,35 +1,45 @@
-"""로컬 대시보드(Flask) + 자동 수집 스케줄러."""
+"""대시보드(Flask) + 자동 수집 스케줄러.
+
+PC 에서 혼자 쓸 때는 로그인 없이, 서버에 올려 여러 명이 쓸 때는(JISIKIN_ADMIN_PASSWORD 설정) 로그인 후 사용.
+"""
 from __future__ import annotations
 
+import os
 import secrets
 import threading
 import traceback
 from collections import deque
 from datetime import datetime, timedelta
+from functools import wraps
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, g, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
+from . import auth
 from . import config as config_mod
 from .collector import collect, effective_interval, estimate_api_calls_per_day, resolve_mode
 from .config import AppConfig, ConfigError
 from .diagnose import run_diagnostics
 from .drafter import DraftError, ai_status, generate_draft
-from .exposure import check_exposure
+from .exposure import all_targets, check_exposure
+from .keywords import SOURCE_LABELS, due_products, generate_for_product, save_seed_settings, seed_settings
 from .matcher import Matcher
+from .searchad import compact
 from .storage import STATUSES, TODO_STATUSES, Store, iso, now_kst
 
 API_DAILY_LIMIT = 25000
 
 
 class AppState:
-    def __init__(self, config_path: Path, db_path: Path | str, env_path: Path | None = None):
+    def __init__(self, config_path: Path, db_path: Path | str, env_path: Path | None = None, data_dir: Path | None = None):
         self.config_path = Path(config_path)
         self.env_path = Path(env_path) if env_path else config_mod.ENV_PATH
+        self.data_dir = Path(data_dir) if data_dir else Path(db_path).parent if str(db_path) != ":memory:" else config_mod.DATA_DIR
         self.cfg: AppConfig = config_mod.load_config(self.config_path)
         self.store = Store(db_path)
         self.running = False
-        self.running_kind = ""  # collect / exposure
+        self.running_kind = ""  # collect / exposure / keywords
         self.next_run_at: datetime | None = None
         self.next_exposure_at: datetime | None = None
         self.logs: deque[str] = deque(maxlen=300)
@@ -37,6 +47,7 @@ class AppState:
         self._wake = threading.Event()
         self._force = False
         self._force_exposure = False
+        self._pending_keywords: list[str] = []
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         # 설정이 바뀌었을 수 있으니 시작할 때 한 번 전체 재분류
@@ -56,7 +67,7 @@ class AppState:
         self._wake.set()  # 수집 주기 변경 반영
         return cfg
 
-    # --- 수집 / 상위노출 확인 (동시에 하나만 실행)
+    # --- 작업 실행 (수집 / 상위노출 확인 / 검색어 생성 — 동시에 하나만)
     def _run(self, kind: str, label: str, job):
         if not self._run_lock.acquire(blocking=False):
             return None
@@ -79,16 +90,29 @@ class AppState:
     def run_exposure(self):
         return self._run("exposure", "상위노출 확인", lambda: check_exposure(self.cfg, self.store, log=self.log))
 
+    def run_keywords(self, product_id: str):
+        return self._run(
+            "keywords", "검색어 자동 생성", lambda: generate_for_product(self.cfg, self.store, product_id, log=self.log)
+        )
+
+    def exposure_targets(self):
+        return all_targets(self.cfg, self.store)
+
     def exposure_interval_hours(self) -> int:
         h = self.cfg.settings.exposure_interval_hours
-        return h if h > 0 and self.cfg.exposure_targets() else 0
+        return h if h > 0 and self.exposure_targets() else 0
 
-    def trigger(self, kind: str = "collect") -> bool:
+    def trigger(self, kind: str = "collect", product: str | None = None, then_exposure: bool = False) -> bool:
         """지금 실행. 다른 작업이 진행 중이면 끝난 뒤 이어서 실행한다."""
-        if self.running and self.running_kind == kind:
+        if kind != "keywords" and self.running and self.running_kind == kind:
             return False
         if self._thread and self._thread.is_alive():
-            if kind == "exposure":
+            if kind == "keywords":
+                if product and product not in self._pending_keywords:
+                    self._pending_keywords.append(product)
+                if then_exposure:
+                    self._force_exposure = True
+            elif kind == "exposure":
                 self._force_exposure = True
             else:
                 self._force = True
@@ -96,8 +120,11 @@ class AppState:
             return True
         if self.running:
             return False
-        target = self.run_exposure if kind == "exposure" else self.run_collection
-        threading.Thread(target=target, daemon=True).start()
+        if kind == "keywords":
+            target, args = self.run_keywords, (product,)
+        else:
+            target, args = (self.run_exposure if kind == "exposure" else self.run_collection), ()
+        threading.Thread(target=target, args=args, daemon=True).start()
         return True
 
     def start_scheduler(self) -> None:
@@ -110,32 +137,10 @@ class AppState:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            interval = effective_interval(self.cfg)
-            now = now_kst()
-            due = interval > 0 and (self.next_run_at is None or now >= self.next_run_at)
-            if self._force or due:
-                self._force = False
-                self.run_collection()
-                self.next_run_at = now_kst() + timedelta(minutes=interval) if interval > 0 else None
-            elif interval <= 0:
-                self.next_run_at = None
-            elif self.next_run_at and self.next_run_at > now + timedelta(minutes=interval):
-                self.next_run_at = now + timedelta(minutes=interval)  # 주기를 줄인 경우
-
-            hours = self.exposure_interval_hours()
-            now = now_kst()
-            if hours > 0 and self.next_exposure_at is None:
-                last = self.store.last_exposure_time()  # 재시작해도 주기를 이어서
-                self.next_exposure_at = last + timedelta(hours=hours) if last else now
-            if self._force_exposure or (hours > 0 and now >= self.next_exposure_at):
-                self._force_exposure = False
-                self.run_exposure()
-                self.next_exposure_at = now_kst() + timedelta(hours=hours) if hours > 0 else None
-            elif hours <= 0:
-                self.next_exposure_at = None
-            elif self.next_exposure_at > now + timedelta(hours=hours):
-                self.next_exposure_at = now + timedelta(hours=hours)
-
+            try:
+                self._tick()
+            except Exception:
+                self.log("스케줄러 오류:\n" + traceback.format_exc())
             wait = 60.0
             for t in (self.next_run_at, self.next_exposure_at):
                 if t:
@@ -143,22 +148,163 @@ class AppState:
             self._wake.wait(timeout=max(1.0, wait))
             self._wake.clear()
 
+    def _tick(self) -> None:
+        # 1) 새 질문 수집
+        interval = effective_interval(self.cfg)
+        now = now_kst()
+        due = interval > 0 and (self.next_run_at is None or now >= self.next_run_at)
+        if self._force or due:
+            self._force = False
+            self.run_collection()
+            self.next_run_at = now_kst() + timedelta(minutes=interval) if interval > 0 else None
+        elif interval <= 0:
+            self.next_run_at = None
+        elif self.next_run_at and self.next_run_at > now + timedelta(minutes=interval):
+            self.next_run_at = now + timedelta(minutes=interval)  # 주기를 줄인 경우
 
-def create_app(state: AppState) -> Flask:
+        # 2) 메인 키워드 → 세부 검색어 (요청받은 것 + 일주일 지난 것)
+        for pid in due_products(self.cfg, self.store):
+            if pid not in self._pending_keywords:
+                self._pending_keywords.append(pid)
+        while self._pending_keywords and not self._stop.is_set():
+            self.run_keywords(self._pending_keywords.pop(0))
+
+        # 3) 상위노출 확인
+        hours = self.exposure_interval_hours()
+        now = now_kst()
+        if hours > 0 and self.next_exposure_at is None:
+            last = self.store.last_exposure_time()  # 재시작해도 주기를 이어서
+            self.next_exposure_at = last + timedelta(hours=hours) if last else now
+        if self._force_exposure or (hours > 0 and now >= self.next_exposure_at):
+            self._force_exposure = False
+            self.run_exposure()
+            self.next_exposure_at = now_kst() + timedelta(hours=hours) if hours > 0 else None
+        elif hours <= 0:
+            self.next_exposure_at = None
+        elif self.next_exposure_at > now + timedelta(hours=hours):
+            self.next_exposure_at = now + timedelta(hours=hours)
+
+
+def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     app = Flask(__name__)
     app.json.ensure_ascii = False
-    csrf_token = secrets.token_urlsafe(16)
+    app.secret_key = auth.secret_key(state.data_dir)
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=os.environ.get("JISIKIN_SECURE_COOKIE") == "1",
+        PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    )
+    if behind_proxy:
+        # 클라우드(Render 등)는 HTTPS 를 앞단에서 처리하고 요청을 넘겨준다
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+    limiter = auth.LoginLimiter()
 
-    def require_api_header():
-        # 다른 웹사이트가 이 로컬 서버로 요청을 보내지 못하게 (사용자 정의 헤더는 교차 출처에서 보낼 수 없음)
+    # ------------------------------------------------------------ 공통
+
+    def csrf_token() -> str:
+        tok = session.get("csrf")
+        if not tok:
+            tok = session["csrf"] = secrets.token_urlsafe(16)
+        return tok
+
+    def check_csrf() -> None:
+        sent = request.form.get("csrf", "").encode()
+        expected = (session.get("csrf") or "-").encode()
+        if not secrets.compare_digest(sent, expected):
+            abort(403)
+
+    def require_api_header() -> None:
+        # 다른 웹사이트가 이 서버로 요청을 보내지 못하게 (사용자 정의 헤더는 교차 출처에서 보낼 수 없음)
         if request.headers.get("X-Jisikin") != "1":
             abort(403)
+
+    def people() -> dict[str, str]:
+        names = {"": "", auth.admin_username(): "관리자"}
+        names.update({u["username"]: u["name"] for u in state.store.list_users()})
+        return names
+
+    def admin_required(view):
+        @wraps(view)
+        def wrapper(*a, **kw):
+            if g.user["role"] != "admin":
+                if request.path.startswith("/api/"):
+                    return jsonify(error="관리자만 사용할 수 있습니다"), 403
+                abort(403)
+            return view(*a, **kw)
+
+        return wrapper
+
+    @app.before_request
+    def load_user():
+        if not auth.auth_enabled():
+            g.user = auth.LOCAL_USER
+            return None
+        user = session.get("user")
+        if user and user.get("role") == "staff":
+            row = state.store.get_user(user["username"])
+            if not row or not row["active"]:
+                session.clear()
+                user = None
+        g.user = user
+        if user or request.endpoint in ("login", "static", "healthz"):
+            return None
+        if request.path.startswith("/api/"):
+            return jsonify(error="로그인이 필요합니다"), 401
+        return redirect(url_for("login", next=request.path))
+
+    @app.context_processor
+    def inject():
+        return {"user": g.get("user") or auth.LOCAL_USER, "auth_on": auth.auth_enabled(), "csrf": csrf_token()}
+
+    @app.errorhandler(403)
+    def forbidden(_e):
+        if request.path.startswith("/api/"):
+            return jsonify(error="권한이 없습니다"), 403
+        return render_template("message.html", title="권한이 없습니다", message="관리자만 볼 수 있는 화면입니다."), 403
 
     def product_payload(cfg: AppConfig) -> list[dict]:
         return [
             {"id": p.id, "name": p.name, "color": p.color, "url": p.url, "categories": [c.name for c in p.categories]}
             for p in cfg.products
         ]
+
+    # ------------------------------------------------------------ 로그인
+
+    @app.get("/healthz")
+    def healthz():
+        return jsonify(ok=True)
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        if not auth.auth_enabled():
+            return redirect(url_for("index"))
+        error = None
+        ip = request.remote_addr or "?"
+        if request.method == "POST":
+            check_csrf()
+            if limiter.blocked(ip):
+                error = "로그인 시도가 너무 많습니다. 15분 뒤에 다시 시도하세요."
+            else:
+                user = auth.authenticate(state.store, request.form.get("username", ""), request.form.get("password", ""))
+                if user:
+                    limiter.reset(ip)
+                    session.clear()
+                    session.permanent = True
+                    session["user"] = user
+                    nxt = request.args.get("next") or "/"
+                    return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else "/")
+                limiter.fail(ip)
+                error = "아이디 또는 비밀번호가 맞지 않습니다."
+        return render_template("login.html", error=error)
+
+    @app.post("/logout")
+    def logout():
+        check_csrf()
+        session.clear()
+        return redirect(url_for("login") if auth.auth_enabled() else url_for("index"))
+
+    # ------------------------------------------------------------ 대시보드
 
     @app.get("/")
     def index():
@@ -170,6 +316,8 @@ def create_app(state: AppState) -> Flask:
         ok, reason = ai_status()
         runs = state.store.recent_runs(1, exclude_mode="exposure")
         exp_runs = state.store.recent_runs(1, mode="exposure")
+        names = people()
+        stats = state.store.answer_stats()
         return jsonify(
             products=product_payload(cfg),
             counts=state.store.todo_counts(cfg.settings.max_age_days),
@@ -180,48 +328,20 @@ def create_app(state: AppState) -> Flask:
             interval=effective_interval(cfg),
             mode=resolve_mode(cfg),
             ai={"enabled": ok, "reason": reason},
+            user=g.user,
+            auth=auth.auth_enabled(),
+            people=names,
+            answer_stats=[
+                {"username": u, "name": names.get(u, u), **s} for u, s in sorted(stats.items(), key=lambda kv: -kv[1]["today"])
+            ],
             exposure={
-                "keywords": len(cfg.exposure_targets()),
+                "keywords": len(state.exposure_targets()),
                 "interval_hours": state.exposure_interval_hours(),
                 "next_at": iso(state.next_exposure_at),
                 "last_run": exp_runs[0] if exp_runs else None,
                 "sources": [{"id": s, "name": config_mod.EXPOSURE_SOURCES[s]} for s in cfg.settings.exposure_sources],
             },
         )
-
-    @app.get("/api/exposure")
-    def api_exposure():
-        a = request.args
-        groups = state.store.latest_exposures(product=a.get("product") or None)
-        order = {(p.id, kw): i for i, (p, kw) in enumerate(state.cfg.exposure_targets())}
-        keep = (
-            "doc_id url title snippet body answer_count reward asked_at views views_per_day views_per_day_kind "
-            "status draft ranks prev_ranks best_rank categories matches detail_fetched_at first_seen"
-        ).split()
-        out = []
-        for g in groups:
-            if (g["product"], g["keyword"]) not in order:
-                continue  # 설정에서 지운 검색어
-            posts = g["posts"]
-            if a.get("unanswered") == "1":
-                posts = [p for p in posts if p["status"] in TODO_STATUSES]
-            items = []
-            for p in posts:
-                item = {k: p.get(k) for k in keep}
-                item["body"] = (p.get("body") or "")[:300]
-                item["product"] = g["product"]
-                items.append(item)
-            out.append({**{k: g[k] for k in ("product", "keyword", "checked_at", "sources")}, "posts": items})
-        # 노출 글이 있는 검색어 먼저 (설정 순서 유지), 노출 글이 없는 검색어는 아래로
-        out.sort(key=lambda g: (not g["posts"], order[(g["product"], g["keyword"])]))
-        return jsonify(groups=out)
-
-    @app.post("/api/exposure/check")
-    def api_exposure_check():
-        require_api_header()
-        if not state.cfg.exposure_targets():
-            return jsonify(error="설정에 상위노출 검색어(exposure)가 없습니다"), 400
-        return jsonify(started=state.trigger("exposure"))
 
     @app.get("/api/questions")
     def api_questions():
@@ -238,7 +358,7 @@ def create_app(state: AppState) -> Flask:
         )
         keep = (
             "doc_id url title snippet body answer_count reward asked_at first_seen product score "
-            "categories matches status draft priority detail_fetched_at"
+            "categories matches status status_by status_changed_at draft priority detail_fetched_at"
         ).split()
         items = []
         for r in rows:
@@ -253,7 +373,7 @@ def create_app(state: AppState) -> Flask:
         status = (request.get_json(silent=True) or {}).get("status")
         if status not in STATUSES:
             return jsonify(error="잘못된 상태"), 400
-        if not state.store.set_status(doc_id, status):
+        if not state.store.set_status(doc_id, status, by=g.user["username"]):
             return jsonify(error="질문을 찾을 수 없습니다"), 404
         return jsonify(ok=True)
 
@@ -281,7 +401,151 @@ def create_app(state: AppState) -> Flask:
         require_api_header()
         return jsonify(started=state.trigger(), running=True)
 
+    # ------------------------------------------------------------ 상위노출
+
+    @app.get("/api/exposure")
+    def api_exposure():
+        a = request.args
+        groups = state.store.latest_exposures(product=a.get("product") or None)
+        order = {(p.id, compact(kw)): i for i, (p, kw) in enumerate(state.exposure_targets())}
+        keep = (
+            "doc_id url title snippet body answer_count reward asked_at views views_per_day views_per_day_kind "
+            "status status_by draft ranks prev_ranks best_rank categories matches detail_fetched_at first_seen"
+        ).split()
+        out = []
+        for g_ in groups:
+            key = (g_["product"], compact(g_["keyword"]))
+            if key not in order:
+                continue  # 설정/검색어 관리에서 지우거나 끈 검색어
+            posts = g_["posts"]
+            if a.get("unanswered") == "1":
+                posts = [p for p in posts if p["status"] in TODO_STATUSES]
+            items = []
+            for p in posts:
+                item = {k: p.get(k) for k in keep}
+                item["body"] = (p.get("body") or "")[:300]
+                item["product"] = g_["product"]
+                items.append(item)
+            out.append({**{k: g_[k] for k in ("product", "keyword", "checked_at", "sources")}, "posts": items, "_order": order[key]})
+        # 노출 글이 있는 검색어 먼저 (설정 순서 유지), 노출 글이 없는 검색어는 아래로
+        out.sort(key=lambda x: (not x["posts"], x.pop("_order")))
+        return jsonify(groups=out)
+
+    @app.post("/api/exposure/check")
+    def api_exposure_check():
+        require_api_header()
+        if not state.exposure_targets():
+            return jsonify(error="확인할 검색어가 없습니다. [검색어 관리]에서 메인 키워드를 넣어주세요"), 400
+        return jsonify(started=state.trigger("exposure"))
+
+    # ------------------------------------------------------------ 검색어 관리 (메인 키워드 → 세부 검색어)
+
+    @app.get("/keywords")
+    @admin_required
+    def keywords_page():
+        return render_template("keywords.html")
+
+    @app.get("/api/keywords")
+    @admin_required
+    def api_keywords():
+        cfg = state.cfg
+        exposure = state.store.exposure_counts()
+        products = []
+        for p in cfg.products:
+            s = seed_settings(state.store, p.id)
+            auto = state.store.auto_keywords(p.id)
+            products.append(
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "color": p.color,
+                    "seeds": s["seeds"],
+                    "max": s["max"],
+                    "generated_at": s["generated_at"],
+                    "last_error": s["last_error"],
+                    "config_keywords": [
+                        {"keyword": kw, "exposure": exposure.get((p.id, kw))} for kw in p.exposure.queries()
+                    ],
+                    "auto": [
+                        {
+                            "keyword": r["keyword"], "seed": r["seed"],
+                            "sources": [SOURCE_LABELS.get(x, x) for x in r["sources"]],
+                            "pc": r["pc"], "mobile": r["mobile"], "score": r["score"],
+                            "enabled": bool(r["enabled"]), "user_set": bool(r["user_set"]),
+                            "exposure": exposure.get((p.id, r["keyword"])),
+                        }
+                        for r in auto
+                    ],
+                }
+            )
+        return jsonify(
+            products=products,
+            running=state.running and state.running_kind == "keywords",
+            pending=list(state._pending_keywords),
+            sources={
+                "autocomplete": True,
+                "searchad": config_mod.searchad_credentials() is not None,
+                "ai": ai_status()[0],
+            },
+            total_enabled=len(state.exposure_targets()),
+            exposure_hours=state.cfg.settings.exposure_interval_hours,
+        )
+
+    @app.post("/api/keywords/seeds")
+    @admin_required
+    def api_keywords_seeds():
+        require_api_header()
+        data = request.get_json(silent=True) or {}
+        pid = data.get("product")
+        if not state.cfg.product(pid):
+            return jsonify(error="제품을 찾을 수 없습니다"), 404
+        seeds = data.get("seeds") or []
+        if isinstance(seeds, str):
+            seeds = seeds.replace("\n", ",").split(",")
+        try:
+            max_n = int(data.get("max") or 20)
+        except (TypeError, ValueError):
+            return jsonify(error="개수는 숫자로 넣어주세요"), 400
+        s = save_seed_settings(state.store, pid, [str(x) for x in seeds], max_n)
+        started = bool(s["seeds"]) and state.trigger("keywords", pid, then_exposure=True)
+        return jsonify(ok=True, seeds=s["seeds"], max=s["max"], started=started)
+
+    @app.post("/api/keywords/generate")
+    @admin_required
+    def api_keywords_generate():
+        require_api_header()
+        pid = (request.get_json(silent=True) or {}).get("product")
+        if not seed_settings(state.store, pid)["seeds"]:
+            return jsonify(error="먼저 메인 키워드를 넣어주세요"), 400
+        return jsonify(started=state.trigger("keywords", pid, then_exposure=True))
+
+    @app.post("/api/keywords/toggle")
+    @admin_required
+    def api_keywords_toggle():
+        require_api_header()
+        data = request.get_json(silent=True) or {}
+        pid, kw = data.get("product"), (data.get("keyword") or "").strip()
+        if not state.cfg.product(pid) or not kw:
+            return jsonify(error="잘못된 요청"), 400
+        state.store.set_auto_keyword(pid, kw, bool(data.get("enabled")))
+        return jsonify(ok=True)
+
+    @app.post("/api/keywords/add")
+    @admin_required
+    def api_keywords_add():
+        require_api_header()
+        data = request.get_json(silent=True) or {}
+        pid = data.get("product")
+        kw = " ".join((data.get("keyword") or "").split())
+        if not state.cfg.product(pid) or not kw or len(kw) > 40:
+            return jsonify(error="검색어를 확인해 주세요 (40자 이내)"), 400
+        state.store.set_auto_keyword(pid, kw, True, sources=["manual"])
+        return jsonify(ok=True)
+
+    # ------------------------------------------------------------ 설정 (관리자)
+
     @app.post("/api/classify-test")
+    @admin_required
     def api_classify_test():
         require_api_header()
         data = request.get_json(silent=True) or {}
@@ -290,15 +554,16 @@ def create_app(state: AppState) -> Flask:
         return jsonify(matches=[{**m.to_dict(), "product_name": names.get(m.product_id)} for m in matches])
 
     @app.post("/api/diagnose")
+    @admin_required
     def api_diagnose():
         require_api_header()
-        ok, lines = run_diagnostics(state.cfg)
+        ok, lines = run_diagnostics(state.cfg, store=state.store)
         return jsonify(ok=ok, lines=lines)
 
     @app.post("/settings/keys")
+    @admin_required
     def settings_keys():
-        if request.form.get("csrf") != csrf_token:
-            abort(403)
+        check_csrf()
         # 비워둔 칸은 기존 값 유지, '삭제' 를 입력하면 지움
         values = {}
         for key in config_mod.ENV_KEYS:
@@ -316,18 +581,59 @@ def create_app(state: AppState) -> Flask:
             state.trigger()
         return redirect(url_for("settings", keys_saved="1"))
 
+    @app.post("/settings/users")
+    @admin_required
+    def settings_users():
+        check_csrf()
+        f = request.form
+        action = f.get("action")
+        username = (f.get("username") or "").strip().lower()
+        name = (f.get("name") or "").strip()
+        password = f.get("password") or ""
+        msg = None
+        if action == "add":
+            if not auth.USERNAME_RE.match(username) or username == auth.admin_username():
+                msg = "아이디는 영문 소문자·숫자·_.- 로 2~20자이며 관리자 아이디와 달라야 합니다."
+            elif state.store.get_user(username):
+                msg = f"'{username}' 아이디가 이미 있습니다."
+            elif not name:
+                msg = "이름을 넣어주세요."
+            elif len(password) < auth.MIN_PASSWORD:
+                msg = f"비밀번호는 {auth.MIN_PASSWORD}자 이상으로 해주세요."
+            else:
+                state.store.save_user(username, name, auth.hash_password(password))
+        else:
+            user = state.store.get_user(username)
+            if not user:
+                msg = "직원을 찾을 수 없습니다."
+            elif action == "password":
+                if len(password) < auth.MIN_PASSWORD:
+                    msg = f"비밀번호는 {auth.MIN_PASSWORD}자 이상으로 해주세요."
+                else:
+                    state.store.save_user(username, user["name"], auth.hash_password(password), bool(user["active"]))
+            elif action == "toggle":
+                state.store.save_user(username, user["name"], active=not user["active"])
+            elif action == "delete":
+                state.store.delete_user(username)
+            else:
+                abort(400)
+        if msg:
+            return redirect(url_for("settings", user_error=msg) + "#users")
+        return redirect(url_for("settings", users_saved="1") + "#users")
+
     @app.get("/api/logs")
+    @admin_required
     def api_logs():
         return jsonify(lines=list(state.logs))
 
     @app.route("/settings", methods=["GET", "POST"])
+    @admin_required
     def settings():
         error = None
         saved = request.args.get("saved") == "1"
         text = config_mod.read_config_text(state.config_path)
         if request.method == "POST":
-            if request.form.get("csrf") != csrf_token:
-                abort(403)
+            check_csrf()
             text = request.form.get("config", "").replace("\r\n", "\n")
             try:
                 state.save_config(text)
@@ -336,18 +642,23 @@ def create_app(state: AppState) -> Flask:
                 error = str(e)
         cfg = state.cfg
         ai_ok, ai_reason = ai_status()
+        stats = state.store.answer_stats()
+        users = []
+        for u in state.store.list_users():
+            users.append({**u, **stats.get(u["username"], {"today": 0, "week": 0, "total": 0})})
+        admin_stats = stats.get(auth.admin_username() if auth.auth_enabled() else "", {"today": 0, "week": 0, "total": 0})
         return render_template(
             "settings.html",
             config_text=text,
             error=error,
             saved=saved,
-            csrf=csrf_token,
             mode=resolve_mode(cfg),
             source=cfg.settings.source,
             has_naver_keys=config_mod.naver_credentials() is not None,
+            has_ad_keys=config_mod.searchad_credentials() is not None,
             interval=effective_interval(cfg),
             query_count=len(cfg.all_search_queries()),
-            exposure_count=len(cfg.exposure_targets()),
+            exposure_count=len(state.exposure_targets()),
             exposure_hours=state.exposure_interval_hours(),
             api_calls=estimate_api_calls_per_day(cfg),
             api_limit=API_DAILY_LIMIT,
@@ -356,6 +667,11 @@ def create_app(state: AppState) -> Flask:
             masked=config_mod.masked_env(),
             keys_saved=request.args.get("keys_saved") == "1",
             key_error=request.args.get("key_error"),
+            users=users,
+            admin_name=auth.admin_username(),
+            admin_stats=admin_stats,
+            users_saved=request.args.get("users_saved") == "1",
+            user_error=request.args.get("user_error"),
             runs=state.store.recent_runs(15),
         )
 

@@ -1,20 +1,42 @@
-<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>설정 - 지식iN 질문 수집기</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2303c75a'/%3E%3Ctext x='16' y='23' font-size='20' font-family='Arial' font-weight='700' fill='white' text-anchor='middle'%3EQ%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-<header class="top">
-  <h1><a href="/">지식iN 질문 수집기</a></h1>
-  <div class="run-status">설정</div>
-  <a class="btn" href="/">← 질문 목록</a>
-</header>
-
+{% extends "base.html" %}
+{% block title %}설정 - 지식iN 질문 수집기{% endblock %}
+{% block status %}설정{% endblock %}
+{% block body %}
 <div class="wrap">
+  {% if auth_on %}
+  <div class="panel" id="users">
+    <h2>직원 계정 · 답변 실적</h2>
+    {% if users_saved %}<div class="ok">저장했습니다.</div>{% endif %}
+    {% if user_error %}<div class="error">{{ user_error }}</div>{% endif %}
+    <table class="runs users">
+      <tr><th>이름</th><th>아이디</th><th>오늘</th><th>이번 주</th><th>전체</th><th>상태</th><th></th></tr>
+      <tr><td>관리자</td><td>{{ admin_name }}</td><td>{{ admin_stats.today }}</td><td>{{ admin_stats.week }}</td><td>{{ admin_stats.total }}</td><td>-</td><td class="muted">비밀번호는 서버 환경변수</td></tr>
+      {% for u in users %}
+      <tr class="{{ '' if u.active else 'inactive' }}">
+        <td>{{ u.name }}</td><td>{{ u.username }}</td><td>{{ u.today }}</td><td>{{ u.week }}</td><td>{{ u.total }}</td>
+        <td>{{ "사용 중" if u.active else "정지" }}</td>
+        <td class="user-actions">
+          <form method="post" action="/settings/users">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="username" value="{{ u.username }}">
+            <input name="password" type="password" placeholder="새 비밀번호" autocomplete="new-password">
+            <button class="btn small" name="action" value="password">비밀번호 변경</button>
+            <button class="btn small" name="action" value="toggle">{{ "정지" if u.active else "다시 사용" }}</button>
+            <button class="btn small" name="action" value="delete" onclick="return confirm('{{ u.name }} 계정을 삭제할까요? (답변 기록은 남습니다)')">삭제</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    <form method="post" action="/settings/users" class="add-user">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input name="name" placeholder="이름 (예: 김직원)" required>
+      <input name="username" placeholder="아이디 (영문 소문자)" autocapitalize="none" required>
+      <input name="password" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="new-password" required>
+      <button class="btn primary" name="action" value="add">직원 추가</button>
+    </form>
+  </div>
+  {% endif %}
+
   <div class="grid">
     <form method="post" class="panel">
       <h2>키워드 · 카테고리 설정 (config.yaml)</h2>
@@ -41,12 +63,29 @@
         <label>네이버 Client Secret
           <input name="NAVER_CLIENT_SECRET" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.NAVER_CLIENT_SECRET) if masked.NAVER_CLIENT_SECRET else '붙여넣기' }}">
         </label>
-        <label>Claude API 키 <span class="muted">(선택 · AI 초안용)</span>
+        <label>Claude API 키 <span class="muted">(선택 · AI 초안 · 검색어 추천)</span>
           <input name="ANTHROPIC_API_KEY" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.ANTHROPIC_API_KEY) if masked.ANTHROPIC_API_KEY else 'sk-ant-...' }}">
         </label>
+        <details style="margin:4px 0 8px;font-size:13px" {% if has_ad_keys %}open{% endif %}>
+          <summary><b>네이버 검색광고 API</b> <span class="muted">(선택 · 월간 검색수)</span></summary>
+          <p class="muted" style="font-size:12px;margin:6px 0">
+            있으면 메인 키워드로 검색어를 만들 때 <b>실제 월간 검색수</b>로 순위를 매깁니다.
+            <a href="https://searchad.naver.com" target="_blank" rel="noopener">searchad.naver.com</a> 가입 →
+            도구 → API 사용 관리 → 발급 (광고비 없이 무료)
+          </p>
+          <label>CUSTOMER_ID
+            <input name="NAVER_AD_CUSTOMER_ID" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.NAVER_AD_CUSTOMER_ID) if masked.NAVER_AD_CUSTOMER_ID else '숫자' }}">
+          </label>
+          <label>액세스라이선스
+            <input name="NAVER_AD_ACCESS_LICENSE" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.NAVER_AD_ACCESS_LICENSE) if masked.NAVER_AD_ACCESS_LICENSE else '붙여넣기' }}">
+          </label>
+          <label>비밀키
+            <input name="NAVER_AD_SECRET_KEY" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.NAVER_AD_SECRET_KEY) if masked.NAVER_AD_SECRET_KEY else '붙여넣기' }}">
+          </label>
+        </details>
         <p class="muted" style="font-size:12px;margin:4px 0 8px">
           비워둔 칸은 기존 값을 유지합니다. 지우려면 <b>삭제</b> 라고 입력하세요.
-          키는 이 PC의 <code>.env</code> 파일에만 저장됩니다.
+          키는 이 프로그램의 <code>.env</code> 파일에만 저장됩니다.
         </p>
         <button class="btn primary" type="submit">키 저장</button>
         {% if not has_naver_keys %}
@@ -123,7 +162,9 @@
     </aside>
   </div>
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 document.getElementById("t-run").addEventListener("click", async () => {
   const out = document.getElementById("t-result");
@@ -165,5 +206,4 @@ document.getElementById("d-copy").addEventListener("click", async () => {
   document.getElementById("d-copy").textContent = "복사됨";
 });
 </script>
-</body>
-</html>
+{% endblock %}
