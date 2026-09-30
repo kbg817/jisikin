@@ -11,7 +11,7 @@ QUESTION = {"title": "팔 오돌토돌 모공각화증인가요", "body": "여�
 def test_prompt_contains_guides(example_cfg):
     product = example_cfg.product("daksaren")
     system, user = build_prompt(example_cfg, product, QUESTION)
-    assert "닥사렌 모각크림" in system and "치료" in system
+    assert "닥사렌 모각크림" in system and "피부과 진료" in system and "완치" not in system
     assert "공정위" in system  # 공통 가이드
     assert "팔 오돌토돌" in user and "모공각화증" in user
 
