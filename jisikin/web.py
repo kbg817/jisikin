@@ -32,6 +32,7 @@ from .tracker import check_answers
 from .storage import STATUSES, TODO_STATUSES, ApiBudget, Store, from_iso, iso, now_kst
 
 API_DAILY_LIMIT = 25000
+EXAMPLE_CHANNELS = {"kin": "지식iN 답변", "youtube": "유튜브 댓글"}  # AI 초안 예시는 채널별로 따로
 KRW_PER_USD = 1400  # 화면에 원화로 대략 보여줄 때만 쓰는 환율
 
 
@@ -610,8 +611,17 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             return jsonify(error="잘못된 상태"), 400
         if isinstance(data.get("draft"), str):
             state.store.save_social_draft_edit(post_id, data["draft"])
-        if not state.store.set_social_status(post_id, status, by=g.user["username"]):
+        by = g.user["username"]
+        if not state.store.set_social_status(post_id, status, by=by):
             return jsonify(error="글을 찾을 수 없습니다"), 404
+        if status == "answered":
+            # 올린 유튜브 댓글을 [답변 예시 > 유튜브 댓글]의 후보로 남긴다
+            post = state.store.get_social(post_id)
+            product = social_product(post) if post else None
+            if product:
+                state.store.capture_final_comment(post_id, product.id, by=by)
+        else:
+            state.store.drop_final_answer(post_id)
         return jsonify(ok=True)
 
     @app.post("/api/social/<post_id>/draft")
@@ -787,7 +797,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     # ------------------------------------------------------------ 답변 예시 (관리자)
 
     def example_payload(ex: dict) -> dict:
-        keep = "id product doc_id url title question answer source edited starred created_by created_at starred_at".split()
+        keep = "id product channel doc_id url title question answer source edited starred created_by created_at starred_at".split()
         out = {k: ex.get(k) for k in keep}
         out["starred"], out["edited"] = bool(ex["starred"]), bool(ex["edited"])
         out["created_by_name"] = people().get(ex.get("created_by") or "", ex.get("created_by") or "")
@@ -807,14 +817,17 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             max=MAX_EXAMPLES,
             ai=ai_status()[0],
             model=cfg.ai.model,
+            channels=[{"id": k, "name": v} for k, v in EXAMPLE_CHANNELS.items()],
             products=[
-                {"id": p.id, "name": p.name, "color": p.color, "starred": state.store.starred_count(p.id)} for p in cfg.products
+                {"id": p.id, "name": p.name, "color": p.color,
+                 "starred": {ch: state.store.starred_count(p.id, ch) for ch in EXAMPLE_CHANNELS}}
+                for p in cfg.products
             ],
             items=[example_payload(ex) for ex in items if cfg.product(ex["product"])],
         )
 
-    def star_room(product_id: str) -> bool:
-        return state.store.starred_count(product_id) < MAX_EXAMPLES
+    def star_room(product_id: str, channel: str) -> bool:
+        return state.store.starred_count(product_id, channel) < MAX_EXAMPLES
 
     @app.post("/api/examples/add")
     @admin_required
@@ -822,14 +835,17 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         require_api_header()
         data = request.get_json(silent=True) or {}
         pid, answer = data.get("product"), (data.get("answer") or "").strip()
+        channel = data.get("channel") or "kin"
         if not state.cfg.product(pid):
             return jsonify(error="제품을 찾을 수 없습니다"), 404
+        if channel not in EXAMPLE_CHANNELS:
+            return jsonify(error="잘못된 요청"), 400
         if len(answer) < 20 or len(answer) > 5000:
             return jsonify(error="답변을 20~5000자로 넣어주세요"), 400
-        starred = star_room(pid)
+        starred = star_room(pid, channel)
         ex_id = state.store.add_example(
             pid, answer, title=str(data.get("title") or "")[:200], question=str(data.get("question") or "")[:1000],
-            by=g.user["username"], starred=starred,
+            by=g.user["username"], starred=starred, channel=channel,
         )
         return jsonify(ok=True, id=ex_id, starred=starred)
 
@@ -841,8 +857,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         if not ex:
             return jsonify(error="예시를 찾을 수 없습니다"), 404
         on = bool((request.get_json(silent=True) or {}).get("starred"))
-        if on and not ex["starred"] and not star_room(ex["product"]):
-            return jsonify(error=f"⭐ 예시는 제품당 {MAX_EXAMPLES}개까지입니다. 다른 예시의 ⭐를 먼저 빼 주세요"), 400
+        if on and not ex["starred"] and not star_room(ex["product"], ex["channel"]):
+            return jsonify(error=f"⭐ 예시는 제품마다 {EXAMPLE_CHANNELS[ex['channel']]} {MAX_EXAMPLES}개까지입니다. 다른 예시의 ⭐를 먼저 빼 주세요"), 400
         state.store.set_example_star(ex_id, on)
         return jsonify(ok=True)
 

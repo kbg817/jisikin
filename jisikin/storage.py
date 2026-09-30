@@ -129,7 +129,8 @@ CREATE TABLE IF NOT EXISTS auto_keywords (
 CREATE TABLE IF NOT EXISTS answer_examples (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     product     TEXT NOT NULL,
-    doc_id      TEXT,                            -- 직원이 답변완료한 질문에서 온 경우
+    channel     TEXT NOT NULL DEFAULT 'kin',     -- kin: 지식iN 답변 / youtube: 유튜브 댓글 (말투·길이가 달라 따로 학습)
+    doc_id      TEXT,                            -- 직원이 답변완료한 질문(또는 댓글완료한 영상 yt:...)에서 온 경우
     title       TEXT NOT NULL DEFAULT '',
     question    TEXT NOT NULL DEFAULT '',
     answer      TEXT NOT NULL,
@@ -141,7 +142,7 @@ CREATE TABLE IF NOT EXISTS answer_examples (
     starred_at  TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ex_doc ON answer_examples(doc_id) WHERE doc_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_ex_product ON answer_examples(product, starred);
+CREATE INDEX IF NOT EXISTS idx_ex_product ON answer_examples(product, channel, starred);
 
 -- 유튜브 영상 · 쓰레드 글 (상태 값은 questions 와 같음: answered = 댓글완료)
 CREATE TABLE IF NOT EXISTS social_posts (
@@ -590,18 +591,43 @@ class Store:
                 (product, doc_id, q.get("title") or "", question, answer, q.get("draft_edited") or 0, by, now_s),
             ).lastrowid
 
+    def capture_final_comment(self, post_id: str, product: str, by: str = "") -> int | None:
+        """댓글완료한 유튜브 영상의 댓글(최종본)을 [유튜브 댓글] 예시 후보로 남긴다."""
+        post = self.get_social(post_id)
+        comment = ((post or {}).get("draft") or "").strip()
+        if not post or not comment or post.get("platform") != "youtube":
+            return None
+        desc = (post.get("body") or "")[:1000]
+        now_s = iso(now_kst())
+        with self._conn() as c:
+            row = c.execute("SELECT id FROM answer_examples WHERE doc_id=?", (post_id,)).fetchone()
+            if row:
+                c.execute(
+                    "UPDATE answer_examples SET answer=?, edited=?, created_by=?, created_at=? WHERE id=?",
+                    (comment, post.get("draft_edited") or 0, by, now_s, row["id"]),
+                )
+                return row["id"]
+            return c.execute(
+                """INSERT INTO answer_examples (product, channel, doc_id, title, question, answer, source, edited, created_by, created_at)
+                   VALUES (?,'youtube',?,?,?,?,'final',?,?,?)""",
+                (product, post_id, post.get("title") or "", desc, comment, post.get("draft_edited") or 0, by, now_s),
+            ).lastrowid
+
     def drop_final_answer(self, doc_id: str) -> None:
         """답변완료를 취소하면 ⭐ 안 한 예시 후보도 지운다."""
         with self._conn() as c:
             c.execute("DELETE FROM answer_examples WHERE doc_id=? AND starred=0", (doc_id,))
 
-    def add_example(self, product: str, answer: str, title: str = "", question: str = "", by: str = "", starred: bool = True) -> int:
+    def add_example(
+        self, product: str, answer: str, title: str = "", question: str = "", by: str = "", starred: bool = True,
+        channel: str = "kin",
+    ) -> int:
         now_s = iso(now_kst())
         with self._conn() as c:
             return c.execute(
-                """INSERT INTO answer_examples (product, title, question, answer, source, starred, created_by, created_at, starred_at)
-                   VALUES (?,?,?,?,'manual',?,?,?,?)""",
-                (product, title.strip(), question.strip(), answer.strip(), int(starred), by, now_s, now_s if starred else None),
+                """INSERT INTO answer_examples (product, channel, title, question, answer, source, starred, created_by, created_at, starred_at)
+                   VALUES (?,?,?,?,?,'manual',?,?,?,?)""",
+                (product, channel, title.strip(), question.strip(), answer.strip(), int(starred), by, now_s, now_s if starred else None),
             ).lastrowid
 
     def get_example(self, example_id: int) -> dict | None:
@@ -610,7 +636,8 @@ class Store:
         return dict(row) if row else None
 
     def list_examples(self, product: str | None = None) -> list[dict]:
-        sql = "SELECT e.*, q.url AS url FROM answer_examples e LEFT JOIN questions q ON q.doc_id = e.doc_id"
+        sql = """SELECT e.*, COALESCE(q.url, s.url) AS url FROM answer_examples e
+                 LEFT JOIN questions q ON q.doc_id = e.doc_id LEFT JOIN social_posts s ON s.post_id = e.doc_id"""
         args: tuple = ()
         if product:
             sql += " WHERE e.product=?"
@@ -619,17 +646,19 @@ class Store:
         with self._conn() as c:
             return [dict(r) for r in c.execute(sql, args).fetchall()]
 
-    def starred_count(self, product: str) -> int:
+    def starred_count(self, product: str, channel: str = "kin") -> int:
         with self._conn() as c:
-            return c.execute("SELECT COUNT(*) FROM answer_examples WHERE product=? AND starred=1", (product,)).fetchone()[0]
+            return c.execute(
+                "SELECT COUNT(*) FROM answer_examples WHERE product=? AND channel=? AND starred=1", (product, channel)
+            ).fetchone()[0]
 
-    def starred_examples(self, product: str, limit: int) -> list[dict]:
+    def starred_examples(self, product: str, limit: int, channel: str = "kin") -> list[dict]:
         """AI 초안에 넣을 예시. 순서를 고정해(오래된 것부터) 같은 제품이면 프롬프트가 같도록 한다 (캐시 적중)."""
         with self._conn() as c:
             rows = c.execute(
-                """SELECT * FROM (SELECT * FROM answer_examples WHERE product=? AND starred=1
+                """SELECT * FROM (SELECT * FROM answer_examples WHERE product=? AND channel=? AND starred=1
                    ORDER BY starred_at DESC, id DESC LIMIT ?) ORDER BY id""",
-                (product, limit),
+                (product, channel, limit),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -1222,6 +1251,10 @@ def _migrate(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE questions ADD COLUMN status_by TEXT")
     if "draft_edited" not in cols:
         c.execute("ALTER TABLE questions ADD COLUMN draft_edited INTEGER NOT NULL DEFAULT 0")
+    ex_cols = {r[1] for r in c.execute("PRAGMA table_info(answer_examples)")}
+    if ex_cols and "channel" not in ex_cols:
+        c.execute("ALTER TABLE answer_examples ADD COLUMN channel TEXT NOT NULL DEFAULT 'kin'")
+        c.execute("DROP INDEX IF EXISTS idx_ex_product")
     social_cols = {r[1] for r in c.execute("PRAGMA table_info(social_posts)")}
     if social_cols and "is_short" not in social_cols:
         c.execute("ALTER TABLE social_posts ADD COLUMN duration INTEGER")

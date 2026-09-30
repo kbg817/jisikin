@@ -334,6 +334,9 @@ details.panel summary { cursor: pointer; font-size: 14px; }
 
 /* 답변 예시 */
 .ex-card { box-shadow: none; }
+.ex-channels { margin: 0 0 12px; }
+.ex-channels button { padding: 8px 16px; font-size: 15px; }
+.ex-channels .muted { font-weight: 400; font-size: 12px; }
 .ex-card.starred { border-left-color: #f59e0b; }
 .ex-title { font-weight: 600; font-size: 15px; word-break: keep-all; overflow-wrap: anywhere; }
 .ex-title a { text-decoration: none; }
