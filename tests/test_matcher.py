@@ -87,10 +87,14 @@ products:
 @pytest.mark.parametrize(
     "title, body, product, category",
     [
-        ("헤어진 전남친이랑 다시 만날 수 있을까요?", "", "sinui", "재회운"),
-        ("사주 봐주실 분 계신가요 96년생", "올해 이직운이 궁금합니다", "sinui", "직장·시험운"),
+        ("헤어진 전남친이랑 다시 만날 수 있을까요? 타로 봤는데", "", "sinui", "재회운"),
+        ("사주 봐주실 분 계신가요 96년생", "올해 이직운이 궁금합니다", "myeongyeon", "직장·시험운"),
         ("타로 잘 보는 곳 추천해주세요", "", "sinui", "점집·상담 추천"),
-        ("개업 날짜 택일 어떻게 하나요", "사업운이 궁금해요", "sinui", "사업운"),
+        ("개업 날짜 택일 사주로 봐주세요", "사업운이 궁금해요", "myeongyeon", "재물·사업운"),
+        ("치질 수술 후기 궁금해요", "", "chidifit", "병원·수술"),
+        ("전남친 연락 올까요?", "", "sinui", "재회운"),
+        ("짝사랑 속마음이 궁금해요", "", "sinui", "연애운"),
+        ("변 볼 때 휴지에 피가 묻어나요", "항문 출혈이 며칠째", "chidifit", "출혈·통증·가려움"),
         ("초등학생 아들 키가 너무 작아요", "반에서 제일 작은데 성장판 검사 받아야 할까요", "eumpa", "자녀 키 고민"),
         ("키 크는 방법 알려주세요 중2입니다", "", "eumpa", "키 크는 방법"),
         ("성조숙증 검사 받아야 하나요", "초경이 빨라서 걱정", "eumpa", "성조숙증"),
@@ -114,8 +118,16 @@ def test_example_config_classifies_typical_questions(example_cfg, title, body, p
         ("식물 성장 조명 추천", ""),
         ("성장기 기업 주식 추천 부탁드립니다", ""),
         ("노트북 추천해주세요", "게임용으로 쓸 거예요"),
+        ("결혼운이 언제쯤 들어올까요", ""),  # 신점·타로·연애·재회·사주 얘기가 없으면 수집 안 함
+        ("치열 교정 비용 얼마나 드나요", "교정 치과 추천"),
     ],
 )
 def test_example_config_ignores_unrelated_questions(example_cfg, title, body):
     m = Matcher(example_cfg.products)
     assert m.best(m.classify(title, body)) is None, title
+
+
+def test_require_keyword_uses_categories_only_for_sorting(example_cfg):
+    m = Matcher(example_cfg.products)
+    sinui = next(x for x in m.classify("결혼운 궁금해요", "배우자운도요") if x.product_id == "sinui")
+    assert sinui.score >= 2 and not sinui.relevant and "결혼·궁합" in sinui.categories

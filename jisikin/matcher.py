@@ -140,7 +140,7 @@ class Matcher:
         return Match(
             product_id=cp.product.id,
             score=score,
-            relevant=score >= cp.product.min_score,
+            relevant=score >= cp.product.min_score and (bool(keywords) or not cp.product.require_keyword),
             keywords=keywords,
             categories=title_cats + body_cats,
             terms=terms[:12],

@@ -19,7 +19,7 @@ def server(tmp_path, monkeypatch):
     cfg_path = tmp_path / "config.yaml"
     shutil.copyfile(EXAMPLE_CONFIG_PATH, cfg_path)
     state = AppState(cfg_path, tmp_path / "db.sqlite", env_path=tmp_path / ".env", data_dir=tmp_path)
-    for doc_id, title in [("1", "사주 재회운 봐주세요"), ("2", "두피 건선 크림 추천")]:
+    for doc_id, title in [("1", "타로 재회운 봐주세요"), ("2", "두피 건선 크림 추천")]:
         state.store.upsert_raw(RawQuestion(doc_id=doc_id, url=f"https://kin.naver.com/qna/detail.naver?docId={doc_id}", title=title), "검색:t")
     state.store.classify(Matcher(state.cfg.products))
     app = create_app(state, behind_proxy=True)

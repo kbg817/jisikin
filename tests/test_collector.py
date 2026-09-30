@@ -47,7 +47,7 @@ def test_collect_saves_classifies_and_enriches(example_cfg, monkeypatch):
     store = Store(":memory:")
     results = {
         "타로": [rq(1001, "타로 재회운 봐주세요"), rq(1000, "타로카드 게임 공략")],
-        "재회운": [rq(1001, "타로 재회운 봐주세요"), rq(999, "전남친 연락 올까요")],
+        "재회 타로": [rq(1001, "타로 재회운 봐주세요"), rq(999, "전남친 연락 올까요")],
         "건선": [rq(998, "두피 건선 샴푸 추천")],
     }
     details = {
@@ -61,6 +61,7 @@ def test_collect_saves_classifies_and_enriches(example_cfg, monkeypatch):
     assert s.queries == len(example_cfg.all_search_queries())
     assert s.new_total == 4
     assert s.new_relevant == 4  # 제목에 '타로' 가 있으면 관련 질문 (게임 질문은 제외어로 걸러야 함)
+    assert store.get("999")["product"] == "sinui"  # '전남친 연락' 같은 재회 고민도 신의소리
     assert s.details == 2 and not s.errors
     q = store.get("1001")
     assert q["product"] == "sinui" and "재회운" in q["categories"]
@@ -132,14 +133,15 @@ def test_list_filters_and_status(example_cfg, monkeypatch):
     example_cfg.settings.fetch_details = False
     store = Store(":memory:")
     client = FakeClient({
-        "사주": [rq(10, "사주 궁합 봐주세요"), rq(11, "사주 재회운 궁금해요"), rq(12, "옷 사주세요")],
+        "사주": [rq(10, "사주 궁합 봐주세요"), rq(11, "타로 재회운 궁금해요"), rq(12, "옷 사주세요")],
         "건선": [rq(13, "건선 크림 추천")],
     })
     collect(example_cfg, store, client=client, log=lambda m: None)
 
     ids = lambda rows: sorted(r["doc_id"] for r in rows)  # noqa: E731
     assert ids(store.list_questions()) == ["10", "11", "13"]
-    assert ids(store.list_questions(product="sinui")) == ["10", "11"]
+    assert ids(store.list_questions(product="myeongyeon")) == ["10"]
+    assert ids(store.list_questions(product="sinui")) == ["11"]
     assert ids(store.list_questions(product="sinui", category="재회운")) == ["11"]
     # '옷 사주세요' 는 제외어로 가려져 점수 0 → 관련도 낮은 목록에도 안 보임
     assert store.get("12")["product"] is None

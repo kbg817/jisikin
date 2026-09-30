@@ -2,7 +2,7 @@ import shutil
 
 from jisikin.config import EXAMPLE_CONFIG_PATH, load_config, parse_config
 from jisikin.matcher import Matcher
-from jisikin.migrations import migrate_config
+from jisikin.migrations import join_products, migrate_config, split_products
 from jisikin.storage import Store
 
 HEAD = """settings:
@@ -39,8 +39,9 @@ def test_adds_myeongun_and_reorders_keeping_user_edits(tmp_path):
     logs = []
     assert migrate_config(path, store, log=logs.append) == [
         "명운연구소 추가, 제품 순서 변경", "제품별 유튜브·쓰레드 검색어(social) 추가",
+        "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소",
     ]
-    assert ids(path) == ["sinui", "myeongun", "daksaren", "eumpa"]
+    assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
     text = path.read_text(encoding="utf-8")
     assert "interval_minutes: 5   # 직접 바꾼 값" in text and "내가 넣은 키워드" in text and "# 메모: 내가 단 주석" in text
     cfg = load_config(path)
@@ -73,7 +74,7 @@ def test_other_products_and_sections_are_kept(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(text, encoding="utf-8")
     migrate_config(path, Store(":memory:"))
-    assert ids(path) == ["sinui", "myeongun", "daksaren", "shop"]  # 모르는 제품은 뒤로, 순서 유지
+    assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "chidifit", "shop"]  # 모르는 제품은 뒤로, 순서 유지
     assert load_config(path).ai.effort == "low"
 
 
@@ -85,7 +86,7 @@ def test_existing_product_with_same_name_is_not_duplicated(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(HEAD + DAK + mine + SINUI, encoding="utf-8")
     migrate_config(path, Store(":memory:"))
-    assert ids(path) == ["sinui", "daksaren", "naming"]
+    assert ids(path) == ["sinui", "myeongyeon", "daksaren", "chidifit", "naming"]
 
 
 def test_unrecognized_layout_is_not_touched(tmp_path):
@@ -106,7 +107,7 @@ def test_startup_applies_migration_and_default_seeds(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(OLD, encoding="utf-8")
     state = AppState(path, tmp_path / "db.sqlite", data_dir=tmp_path)
-    assert [p.id for p in state.cfg.products] == ["sinui", "myeongun", "daksaren", "eumpa"]
+    assert [p.id for p in state.cfg.products] == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
     assert seed_settings(state.store, "myeongun")["seeds"] == ["작명", "개명", "아기 이름", "이름 풀이"]
     assert seed_settings(state.store, "daksaren")["seeds"] == ["건선", "모공각화증"]
     assert any("명운연구소" in line for line in state.logs)
@@ -160,3 +161,40 @@ def test_migration_removes_product_bans(tmp_path):
     out = _no_product_bans(text, new_example)
     assert "완치" not in out and "피부과 진료" in out and "직접 넣은 금지 문장" in out
     assert _no_product_bans("변경 없음\n", new_example) is None
+
+
+def test_sinui_split_updates_default_sinui_and_adds_products(tmp_path):
+    from jisikin.migrations import _OLD_SINUI_KEYWORDS, _sinui_split
+
+    example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    import re
+
+    old_kw = "    keywords: [" + ", ".join(_OLD_SINUI_KEYWORDS) + "]\n"
+    new_sinui_kw = re.search(r"^    keywords: \[신점, 타로,[^\]]*\]\n", example, re.M).group(0)
+    # 예전 기본 신의소리 + 명연당·치디핏 없음 + 사이트 주소는 직접 넣은 상태
+    old = example.replace(new_sinui_kw, old_kw, 1)
+    old = re.sub(r"^    require_keyword: true .*신점.*\n", "", old, count=1, flags=re.M)
+    old = old.replace('url: "https://voiceofgod.co.kr/"', 'url: "https://sinui.kr"', 1)
+    old = old.replace('url: "https://myeongunlab.co.kr/"', 'url: ""', 1)  # 비어 있던 주소는 채워짐
+    parts = split_products(old)
+    head, blocks, tail = parts
+    old = join_products(head, [b for b in blocks if b[0] not in ("myeongyeon", "chidifit")], tail)
+    new = _sinui_split(old, example)
+    cfg = parse_config(new)
+    assert [p.id for p in cfg.products] == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
+    s = cfg.product("sinui")
+    assert s.keywords[:3] == ["신점", "타로", "재회"] and s.require_keyword and s.url == "https://sinui.kr"
+    assert "재회 주파수" in s.social_queries() and "짝사랑 주파수" in s.social_queries()
+    assert cfg.product("myeongun").url == "https://myeongunlab.co.kr/"
+    assert "한자" in cfg.product("myeongyeon").answer_guide
+    # 신의소리 키워드를 직접 고쳐 둔 경우: 신의소리는 그대로, 새 서비스만 추가
+    custom = old.replace(old_kw, "    keywords: [신점, 타로, 내 키워드]\n", 1)
+    cfg2 = parse_config(_sinui_split(custom, example))
+    assert cfg2.product("sinui").keywords == ["신점", "타로", "내 키워드"] and cfg2.product("chidifit")
+
+
+def test_social_interval_6_to_8_only_when_default():
+    from jisikin.migrations import _social_8h
+
+    assert "social_interval_hours: 8   # x" in _social_8h("settings:\n  social_interval_hours: 6   # x\n", "")
+    assert _social_8h("settings:\n  social_interval_hours: 12\n", "") is None

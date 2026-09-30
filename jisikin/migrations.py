@@ -71,7 +71,7 @@ def add_product_in_order(text: str, product_id: str, order: list[str], example_t
 
 
 def _myeongun(text: str, example_text: str) -> str | None:
-    return add_product_in_order(text, "myeongun", ["sinui", "myeongun", "daksaren", "eumpa"], example_text)
+    return add_product_in_order(text, "myeongun", ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"], example_text)
 
 
 def _ai_sonnet(text: str, example_text: str) -> str | None:
@@ -133,11 +133,69 @@ def _no_product_bans(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+# 예전 기본 신의소리 키워드 — 이 그대로면 새 기본값(신점·타로만)으로 바꾼다. 직접 고쳤으면 건드리지 않음
+_OLD_SINUI_KEYWORDS = ["신점", "타로", "사주", "운세", "궁합", "점집", "철학관", "역술", "무당", "신내림", "팔자", "신년 운세", "토정비결"]
+_GUIDE_RE = re.compile(r"^    answer_guide:.*\n(?:(?:      .*)?\n)*", re.M)
+_URL_RE = re.compile(r"^    url:.*$", re.M)
+
+
+def _sinui_split(text: str, example_text: str) -> str | None:
+    """신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로. 치디핏 추가. 비어 있는 사이트 주소 채우기.
+    신의소리 블록은 예전 기본값 그대로일 때만 새 기본값으로 바꾸고, 답변 가이드·직접 넣은 사이트 주소는 서버 것을 유지한다."""
+    parts, ex = split_products(text), split_products(example_text)
+    if parts is None or ex is None:
+        return None
+    head, blocks, tail = parts
+    cfg = parse_config(text)
+    sinui = next((p for p in cfg.products if p.id == "sinui"), None)
+    new_sinui = dict(ex[1]).get("sinui")
+    if sinui and new_sinui and sinui.keywords == _OLD_SINUI_KEYWORDS:
+        old_block = dict(blocks)["sinui"]
+        block = new_sinui
+        url, guide = _URL_RE.search(old_block), _GUIDE_RE.search(old_block)
+        if url:
+            block = _URL_RE.sub(lambda _: url.group(0), block, count=1)
+        if guide:
+            block = _GUIDE_RE.sub(lambda _: guide.group(0), block, count=1)
+        blocks = [(pid, block if pid == "sinui" else b) for pid, b in blocks]
+    # 사이트 주소가 비어 있는 제품은 예시 설정의 주소로 채운다
+    example_urls = {pid: m.group(0) for pid, b in ex[1] if (m := _URL_RE.search(b))}
+    blocks = [
+        (pid, _URL_RE.sub(lambda _: example_urls[pid], b, count=1)
+         if pid in example_urls and re.search(r'^    url:\s*(""|\'\')?\s*(#.*)?$', b, re.M) else b)
+        for pid, b in blocks
+    ]
+    text2 = join_products(head, blocks, tail)
+    order = ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
+    for pid in ("myeongyeon", "chidifit"):
+        text2 = add_product_in_order(text2, pid, order, example_text) or text2
+    return None if text2 == text else text2
+
+
+def _sinui_seeds(store: Store) -> None:
+    """[검색어 관리] 신의소리 메인 키워드가 예전 기본값이면 사주·재회운을 뺀다 (사주는 명연당으로)."""
+    cur = store.kv_get("seeds:sinui")
+    if isinstance(cur, dict) and cur.get("seeds") == ["신점", "타로", "사주", "재회운"]:
+        store.kv_set("seeds:sinui", {**cur, "seeds": ["신점", "타로"]})
+
+
+def _social_8h(text: str, example_text: str) -> str | None:
+    """유튜브 검색어가 늘어 찾는 간격 6시간 → 8시간 (할당량 여유). 직접 다른 값으로 바꿔 둔 경우는 그대로."""
+    new = re.sub(r"^(  social_interval_hours:[ \t]*)6(?=[ \t]|$)", r"\g<1>8", text, count=1, flags=re.M)
+    return None if new == text else new
+
+
+# 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
+STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
+
+
 MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-09-myeongun", "명운연구소 추가, 제품 순서 변경", _myeongun),
     ("2026-09-ai-sonnet", "AI 초안 모델 Sonnet 5.5 · 생각 깊이 low", _ai_sonnet),
     ("2026-10-social", "제품별 유튜브·쓰레드 검색어(social) 추가", _social),
     ("2026-10-no-bans", "제품별 답변 가이드에서 금지 표현 문장 삭제", _no_product_bans),
+    ("2026-10-sinui-split", "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소", _sinui_split),
+    ("2026-10-social-8h", "유튜브·쓰레드 찾는 간격 6시간 → 8시간", _social_8h),
 ]
 
 
@@ -157,6 +215,8 @@ def migrate_config(path: Path, store: Store, log: Callable[[str], None] = print,
             new = fn(text, example_text)
             if new is not None:
                 parse_config(new)  # 결과가 올바른 설정일 때만 저장
+                if key in STORE_MIGRATIONS:
+                    STORE_MIGRATIONS[key](store)
                 path.with_name(f"config.backup-{key}.yaml").write_text(text, encoding="utf-8")
                 tmp = path.with_suffix(".yaml.tmp")
                 tmp.write_text(new, encoding="utf-8")

@@ -14,7 +14,7 @@ def app_state(tmp_path):
     cfg_path = tmp_path / "config.yaml"
     shutil.copyfile(EXAMPLE_CONFIG_PATH, cfg_path)
     state = AppState(cfg_path, tmp_path / "db.sqlite")
-    for doc_id, title in [("101", "사주 재회운 봐주세요"), ("102", "두피 건선 크림 추천"), ("103", "노트북 추천")]:
+    for doc_id, title in [("101", "타로 재회운 봐주세요"), ("102", "두피 건선 크림 추천"), ("103", "노트북 추천")]:
         state.store.upsert_raw(RawQuestion(doc_id=doc_id, url=f"https://kin.naver.com/qna/detail.naver?docId={doc_id}", title=title), "검색:test")
     from jisikin.matcher import Matcher
 
@@ -35,7 +35,7 @@ def test_pages_render(client):
 
 def test_meta_and_questions(client):
     meta = client.get("/api/meta").get_json()
-    assert [p["name"] for p in meta["products"]] == ["신의소리", "명운연구소", "닥사렌 모각크림", "음파쑥쑥"]
+    assert [p["name"] for p in meta["products"]] == ["신의소리", "명연당", "명운연구소", "닥사렌 모각크림", "음파쑥쑥", "치디핏"]
     assert meta["counts"]["products"]["sinui"]["total"] == 1
     assert meta["mode"] == "web" and meta["ai"]["enabled"] is False
     items = client.get("/api/questions").get_json()["items"]
@@ -80,7 +80,7 @@ def test_settings_save_rejects_invalid_and_keeps_file(client, app_state):
 
 def test_settings_save_reclassifies(client, app_state):
     text = app_state.config_path.read_text(encoding="utf-8").replace(
-        "keywords: [신점, 타로, 사주,", "keywords: [신점, 타로, 노트북, 사주,"
+        "keywords: [신점, 타로, ", "keywords: [신점, 타로, 노트북, "
     )
     r = client.post("/settings", data={"csrf": _csrf(client), "config": text})
     assert r.status_code == 302
@@ -162,4 +162,5 @@ def test_exposure_check_runs_right_after_new_keywords(tmp_path, monkeypatch):
     )
     state.next_exposure_at = now_kst() + timedelta(hours=5)  # 원래라면 5시간 뒤
     state._tick()
-    assert ran == ["collect", "keywords:sinui", "keywords:myeongun", "keywords:daksaren", "keywords:eumpa", "exposure"]
+    assert ran == ["collect", "keywords:sinui", "keywords:myeongyeon", "keywords:myeongun", "keywords:daksaren", "keywords:eumpa",
+                   "keywords:chidifit", "exposure"]

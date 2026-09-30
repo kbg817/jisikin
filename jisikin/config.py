@@ -79,6 +79,7 @@ class Product:
     exclude: list[str] = field(default_factory=list)
     watch_urls: list[str] = field(default_factory=list)
     min_score: float = 2
+    require_keyword: bool = False  # True 면 제품 키워드가 있는 글만 관련 글 (카테고리는 분류에만 씀)
     url: str = ""
     color: str = "#2563eb"
     answer_guide: str = ""
@@ -114,7 +115,7 @@ class Settings:
     exposure_top_n: int = 5
     exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin"])
     # 유튜브 · 쓰레드
-    social_interval_hours: int = 6       # 자동 수집 주기(시간). 0 이면 끔
+    social_interval_hours: int = 8       # 자동 수집 주기(시간). 0 이면 끔
     social_max_age_days: int = 14        # (쓰레드) 이보다 오래된 글은 찾지 않고 할 일에서도 숨김
     youtube_max_age_days: int = 180      # (유튜브) 이보다 오래된 영상은 찾지 않음. 인기 영상은 오래 추천되므로 길게
     youtube_order: str = "relevance"     # 유튜브 검색 순서: relevance(유튜브 검색 결과 순 = 사람들이 보는 순), viewCount, date
@@ -332,6 +333,7 @@ def parse_config(text: str) -> AppConfig:
                 exclude=exclude,
                 watch_urls=watch_urls,
                 min_score=min_score,
+                require_keyword=bool(rp.get("require_keyword", False)),
                 url=str(rp.get("url") or "").strip(),
                 color=str(rp.get("color") or "#2563eb").strip(),
                 answer_guide=str(rp.get("answer_guide") or "").strip(),
