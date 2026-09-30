@@ -179,6 +179,12 @@ def _sinui_seeds(store: Store) -> None:
         store.kv_set("seeds:sinui", {**cur, "seeds": ["신점", "타로"]})
 
 
+def _social_8h(text: str, example_text: str) -> str | None:
+    """유튜브 검색어가 늘어 찾는 간격 6시간 → 8시간 (할당량 여유). 직접 다른 값으로 바꿔 둔 경우는 그대로."""
+    new = re.sub(r"^(  social_interval_hours:[ \t]*)6(?=[ \t]|$)", r"\g<1>8", text, count=1, flags=re.M)
+    return None if new == text else new
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -189,6 +195,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-social", "제품별 유튜브·쓰레드 검색어(social) 추가", _social),
     ("2026-10-no-bans", "제품별 답변 가이드에서 금지 표현 문장 삭제", _no_product_bans),
     ("2026-10-sinui-split", "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소", _sinui_split),
+    ("2026-10-social-8h", "유튜브·쓰레드 찾는 간격 6시간 → 8시간", _social_8h),
 ]
 
 

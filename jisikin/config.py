@@ -115,7 +115,7 @@ class Settings:
     exposure_top_n: int = 5
     exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin"])
     # 유튜브 · 쓰레드
-    social_interval_hours: int = 6       # 자동 수집 주기(시간). 0 이면 끔
+    social_interval_hours: int = 8       # 자동 수집 주기(시간). 0 이면 끔
     social_max_age_days: int = 14        # (쓰레드) 이보다 오래된 글은 찾지 않고 할 일에서도 숨김
     youtube_max_age_days: int = 180      # (유튜브) 이보다 오래된 영상은 찾지 않음. 인기 영상은 오래 추천되므로 길게
     youtube_order: str = "relevance"     # 유튜브 검색 순서: relevance(유튜브 검색 결과 순 = 사람들이 보는 순), viewCount, date

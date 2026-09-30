@@ -191,3 +191,10 @@ def test_sinui_split_updates_default_sinui_and_adds_products(tmp_path):
     custom = old.replace(old_kw, "    keywords: [신점, 타로, 내 키워드]\n", 1)
     cfg2 = parse_config(_sinui_split(custom, example))
     assert cfg2.product("sinui").keywords == ["신점", "타로", "내 키워드"] and cfg2.product("chidifit")
+
+
+def test_social_interval_6_to_8_only_when_default():
+    from jisikin.migrations import _social_8h
+
+    assert "social_interval_hours: 8   # x" in _social_8h("settings:\n  social_interval_hours: 6   # x\n", "")
+    assert _social_8h("settings:\n  social_interval_hours: 12\n", "") is None

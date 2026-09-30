@@ -72,7 +72,7 @@ YT_VIDEOS = {
 def test_example_config_has_social(example_cfg):
     daksaren = example_cfg.product("daksaren")
     assert daksaren.social_queries() == ["닥사렌", "모공각화증", "건선 관리"]
-    assert example_cfg.settings.social_interval_hours == 6
+    assert example_cfg.settings.social_interval_hours == 8
     assert "관계를 밝힙니다" in example_cfg.ai.social_guide
     # social 이 없으면 제품 이름으로 검색
     cfg = parse_config("products:\n  - id: a\n    name: 우리제품\n    keywords: [크림]\n")

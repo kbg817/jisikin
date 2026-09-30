@@ -26,7 +26,7 @@ settings:
   exposure_sources: [pc, mobile, kin]  # pc: 통합검색(PC), mobile: 통합검색(모바일), kin: 지식iN탭 정확도순
 
   # --- 유튜브 · 쓰레드 (제품별 social.keywords 로 검색. [설정] > API 키에 유튜브 키 / 쓰레드 토큰이 있을 때만)
-  social_interval_hours: 6    # 몇 시간마다 찾을지. 0 이면 끔
+  social_interval_hours: 8    # 몇 시간마다 찾을지. 0 이면 끔
   social_max_age_days: 14     # (쓰레드) 이보다 오래된 글은 찾지 않고 할 일에서도 숨깁니다
   youtube_max_age_days: 180   # (유튜브) 이보다 오래된 영상은 찾지 않습니다. 인기 영상은 몇 달씩 추천되므로 길게
   youtube_order: relevance    # 유튜브 검색 순서: relevance(유튜브 검색 결과 순) / viewCount(조회수 순) / date(최신 순)
@@ -34,7 +34,7 @@ settings:
   track_check_hour: 6         # [작업 결과] 매일 이 시각(한국 시간)에 내 답변·댓글이 아직 보이는지 확인. -1 이면 끔
   youtube_daily_units: 9000   # 유튜브 API 하루 사용 상한 (무료 10,000). 검색어 1개 = 약 101
                               #   하루 사용량 ≈ 검색어 수 × 101 × (24 ÷ social_interval_hours)
-                              #   예) 검색어 12개, 6시간마다 → 약 4,850
+                              #   예) 검색어 20개, 8시간마다 → 약 6,060
   threads_results: 50         # 검색어당 쓰레드 글 수 (최대 100)
 
 # ----------------------------------------------------------
