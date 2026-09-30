@@ -40,8 +40,9 @@ def test_adds_myeongun_and_reorders_keeping_user_edits(tmp_path):
     assert migrate_config(path, store, log=logs.append) == [
         "명운연구소 추가, 제품 순서 변경", "제품별 유튜브·쓰레드 검색어(social) 추가",
         "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소",
+        "세이프맘 탄소매트 추가",
     ]
-    assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
+    assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit", "safemom"]
     text = path.read_text(encoding="utf-8")
     assert "interval_minutes: 5   # 직접 바꾼 값" in text and "내가 넣은 키워드" in text and "# 메모: 내가 단 주석" in text
     cfg = load_config(path)
@@ -74,7 +75,7 @@ def test_other_products_and_sections_are_kept(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(text, encoding="utf-8")
     migrate_config(path, Store(":memory:"))
-    assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "chidifit", "shop"]  # 모르는 제품은 뒤로, 순서 유지
+    assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "chidifit", "safemom", "shop"]  # 모르는 제품은 뒤로, 순서 유지
     assert load_config(path).ai.effort == "low"
 
 
@@ -86,7 +87,7 @@ def test_existing_product_with_same_name_is_not_duplicated(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(HEAD + DAK + mine + SINUI, encoding="utf-8")
     migrate_config(path, Store(":memory:"))
-    assert ids(path) == ["sinui", "myeongyeon", "daksaren", "chidifit", "naming"]
+    assert ids(path) == ["sinui", "myeongyeon", "daksaren", "chidifit", "safemom", "naming"]
 
 
 def test_unrecognized_layout_is_not_touched(tmp_path):
@@ -107,7 +108,7 @@ def test_startup_applies_migration_and_default_seeds(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(OLD, encoding="utf-8")
     state = AppState(path, tmp_path / "db.sqlite", data_dir=tmp_path)
-    assert [p.id for p in state.cfg.products] == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
+    assert [p.id for p in state.cfg.products] == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit", "safemom"]
     assert seed_settings(state.store, "myeongun")["seeds"] == ["작명", "개명", "아기 이름", "이름 풀이"]
     assert seed_settings(state.store, "daksaren")["seeds"] == ["건선", "모공각화증"]
     assert any("명운연구소" in line for line in state.logs)
@@ -181,7 +182,7 @@ def test_sinui_split_updates_default_sinui_and_adds_products(tmp_path):
     old = join_products(head, [b for b in blocks if b[0] not in ("myeongyeon", "chidifit")], tail)
     new = _sinui_split(old, example)
     cfg = parse_config(new)
-    assert [p.id for p in cfg.products] == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
+    assert [p.id for p in cfg.products] == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit", "safemom"]
     s = cfg.product("sinui")
     assert s.keywords[:3] == ["신점", "타로", "재회"] and s.require_keyword and s.url == "https://sinui.kr"
     assert "재회 주파수" in s.social_queries() and "짝사랑 주파수" in s.social_queries()
