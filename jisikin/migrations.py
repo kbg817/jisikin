@@ -185,6 +185,11 @@ def _social_8h(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+def _safemom(text: str, example_text: str) -> str | None:
+    order = ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit", "safemom"]
+    return add_product_in_order(text, "safemom", order, example_text)
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -196,6 +201,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-no-bans", "제품별 답변 가이드에서 금지 표현 문장 삭제", _no_product_bans),
     ("2026-10-sinui-split", "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소", _sinui_split),
     ("2026-10-social-8h", "유튜브·쓰레드 찾는 간격 6시간 → 8시간", _social_8h),
+    ("2026-10-safemom", "세이프맘 탄소매트 추가", _safemom),
 ]
 
 

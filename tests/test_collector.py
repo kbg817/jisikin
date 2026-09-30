@@ -123,7 +123,7 @@ def test_api_call_estimate(example_cfg, monkeypatch):
     monkeypatch.setenv("NAVER_CLIENT_SECRET", "secret")
     example_cfg.settings.interval_minutes = 10
     n = len(example_cfg.all_search_queries())
-    assert estimate_api_calls_per_day(example_cfg) == n * 144
+    assert estimate_api_calls_per_day(example_cfg) == n * (1440 // effective_interval(example_cfg))
     assert estimate_api_calls_per_day(example_cfg) < 25000
 
 

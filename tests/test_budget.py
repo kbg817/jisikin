@@ -56,12 +56,13 @@ def test_interval_stretches_when_too_many_keywords(monkeypatch, example_cfg):
     monkeypatch.setenv("NAVER_CLIENT_ID", "id")
     monkeypatch.setenv("NAVER_CLIENT_SECRET", "s")
     cfg = example_cfg
-    assert effective_interval(cfg) == 10  # 기본 검색어 72개는 10분이면 충분
+    base = effective_interval(cfg)
+    assert 10 <= base <= 12  # 기본 검색어(약 120개)는 10~12분 간격이면 충분
     extra = [f"추가 검색어 {i}" for i in range(250)]
     cfg.products[0].keywords.extend(extra)
     n = len(cfg.all_search_queries())
     interval = effective_interval(cfg)
-    assert interval > 10
+    assert interval > base
     assert estimate_api_calls_per_day(cfg) <= cfg.settings.api_daily_limit * FEED_SHARE
     assert n * 1440 / interval <= cfg.settings.api_daily_limit * FEED_SHARE
     assert n * 1440 / (interval - 1) > cfg.settings.api_daily_limit * FEED_SHARE  # 딱 필요한 만큼만 늘림

@@ -80,7 +80,7 @@ def test_examples_api_star_limit_edit_delete(web):
     data = client.get("/api/examples").get_json()
     mg = next(p for p in data["products"] if p["id"] == "myeongun")
     assert mg["starred"] == {"kin": 5, "youtube": 0} and data["max"] == 5
-    assert [p["name"] for p in data["products"]] == ["신의소리", "명연당", "명운연구소", "닥사렌 모각크림", "음파쑥쑥", "치디핏"]
+    assert [p["name"] for p in data["products"]] == ["신의소리", "명연당", "명운연구소", "닥사렌 모각크림", "음파쑥쑥", "치디핏", "세이프맘 탄소매트"]
 
     assert client.post(f"/api/examples/{sixth}/update", json={"answer": "짧음"}, headers=H).status_code == 400
     assert client.post(f"/api/examples/{sixth}/update", json={"answer": "다듬은 여섯 번째 답변입니다. 법원 절차도 안내합니다."}, headers=H).get_json() == {"ok": True}

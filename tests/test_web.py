@@ -35,7 +35,7 @@ def test_pages_render(client):
 
 def test_meta_and_questions(client):
     meta = client.get("/api/meta").get_json()
-    assert [p["name"] for p in meta["products"]] == ["신의소리", "명연당", "명운연구소", "닥사렌 모각크림", "음파쑥쑥", "치디핏"]
+    assert [p["name"] for p in meta["products"]] == ["신의소리", "명연당", "명운연구소", "닥사렌 모각크림", "음파쑥쑥", "치디핏", "세이프맘 탄소매트"]
     assert meta["counts"]["products"]["sinui"]["total"] == 1
     assert meta["mode"] == "web" and meta["ai"]["enabled"] is False
     items = client.get("/api/questions").get_json()["items"]
@@ -163,4 +163,4 @@ def test_exposure_check_runs_right_after_new_keywords(tmp_path, monkeypatch):
     state.next_exposure_at = now_kst() + timedelta(hours=5)  # 원래라면 5시간 뒤
     state._tick()
     assert ran == ["collect", "keywords:sinui", "keywords:myeongyeon", "keywords:myeongun", "keywords:daksaren", "keywords:eumpa",
-                   "keywords:chidifit", "exposure"]
+                   "keywords:chidifit", "keywords:safemom", "exposure"]
