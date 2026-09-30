@@ -212,7 +212,8 @@ def test_migration_adds_social_blocks_once():
     new = _social(old, example)
     assert new is not None
     cfg = parse_config(new)
-    assert cfg.product("sinui").social_queries() == ["신의소리", "신점 후기", "전화 타로"]
+    assert cfg.product("sinui").social_queries()[:3] == ["신의소리", "신점 후기", "전화 타로"]
+    assert "재회 주파수" in cfg.product("sinui").social_queries()
     assert _social(new, example) is None
 
 
