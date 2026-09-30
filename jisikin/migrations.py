@@ -112,10 +112,32 @@ def _social(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+# 제품별 금지 표현 문장 (예전 기본 가이드 그대로인 경우만 뺀다)
+_PRODUCT_BANS = [
+    ('      결과를 단정하거나 불안감을 조성하지 않습니다. ("반드시 ~된다", "굿을 해야 한다" 등 금지)\n',
+     ''),
+    ('      특정 이름이 "나쁘다", "불행해진다"처럼 불안을 조성하는 표현은 쓰지 않습니다.\n',
+     ''),
+    ('      화장품은 질병을 치료한다고 표현할 수 없으므로 "치료", "완치", "낫는다" 같은 표현은 쓰지 않고,\n      건선처럼 증상이 넓거나 심하면 피부과 진료를 먼저 권합니다.\n',
+     '      건선처럼 증상이 넓거나 심하면 피부과 진료를 먼저 권합니다.\n'),
+    ('      "키가 몇 cm 큰다" 같은 효능 단정은 하지 않고, 성조숙증 의심·성장호르몬 치료 등\n      의학적 판단이 필요한 경우 소아청소년과·성장클리닉 진료를 권합니다.\n',
+     '      성조숙증 의심·성장호르몬 치료 등 의학적 판단이 필요한 경우 소아청소년과·성장클리닉 진료를 권합니다.\n'),
+]
+
+
+def _no_product_bans(text: str, example_text: str) -> str | None:
+    """제품별 answer_guide 에서 금지 표현 문장을 뺀다. 직접 고친 문장은 그대로 둔다."""
+    new = text
+    for old, repl in _PRODUCT_BANS:
+        new = new.replace(old, repl)
+    return None if new == text else new
+
+
 MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-09-myeongun", "명운연구소 추가, 제품 순서 변경", _myeongun),
     ("2026-09-ai-sonnet", "AI 초안 모델 Sonnet 5.5 · 생각 깊이 low", _ai_sonnet),
     ("2026-10-social", "제품별 유튜브·쓰레드 검색어(social) 추가", _social),
+    ("2026-10-no-bans", "제품별 답변 가이드에서 금지 표현 문장 삭제", _no_product_bans),
 ]
 
 

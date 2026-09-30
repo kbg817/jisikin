@@ -201,7 +201,7 @@ def test_social_matcher_keeps_exclude_rules(example_cfg):
 def test_social_prompt_uses_comment_style(example_cfg):
     post = {"platform": "youtube", "title": "모공각화증 관리", "body": "설명", "author": "피부 채널", "categories": ["모공각화증"]}
     system, user = build_social_prompt(example_cfg, example_cfg.product("daksaren"), post)
-    assert "유튜브 영상에 달 댓글" in system and "치료" in system  # 제품 가이드의 금지 표현도 들어감
+    assert "유튜브 영상에 달 댓글" in system and "피부과 진료" in system  # 제품 가이드도 들어감
     assert "[제목]\n모공각화증 관리" in user and "[작성자] 피부 채널" in user
 
 

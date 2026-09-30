@@ -142,3 +142,21 @@ def test_ai_defaults_move_to_sonnet_only_when_unchanged(tmp_path):
     migrate_config(path, Store(":memory:"))
     cfg = load_config(path)
     assert (cfg.ai.model, cfg.ai.effort) == ("claude-opus-5", "high")  # 직접 바꾼 값은 그대로
+
+
+def test_migration_removes_product_bans(tmp_path):
+    from jisikin.migrations import _no_product_bans
+
+    new_example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    for word in ("굿을 해야", "불행해진다", "완치", "몇 cm"):
+        assert word not in new_example
+    assert "피부과 진료를 먼저 권합니다" in new_example and "성장클리닉 진료를 권합니다" in new_example
+    # 예전 기본 가이드 문장만 빠지고, 직접 고친 문장은 그대로
+    text = (
+        "      화장품은 질병을 치료한다고 표현할 수 없으므로 \"치료\", \"완치\", \"낫는다\" 같은 표현은 쓰지 않고,\n"
+        "      건선처럼 증상이 넓거나 심하면 피부과 진료를 먼저 권합니다.\n"
+        "      우리가 직접 넣은 금지 문장입니다.\n"
+    )
+    out = _no_product_bans(text, new_example)
+    assert "완치" not in out and "피부과 진료" in out and "직접 넣은 금지 문장" in out
+    assert _no_product_bans("변경 없음\n", new_example) is None
