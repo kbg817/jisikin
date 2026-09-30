@@ -80,7 +80,7 @@ def test_settings_save_rejects_invalid_and_keeps_file(client, app_state):
 
 def test_settings_save_reclassifies(client, app_state):
     text = app_state.config_path.read_text(encoding="utf-8").replace(
-        "keywords: [신점, 타로]", "keywords: [신점, 타로, 노트북]"
+        "keywords: [신점, 타로, ", "keywords: [신점, 타로, 노트북, "
     )
     r = client.post("/settings", data={"csrf": _csrf(client), "config": text})
     assert r.status_code == 302

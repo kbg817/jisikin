@@ -60,15 +60,15 @@ def test_collect_saves_classifies_and_enriches(example_cfg, monkeypatch):
     assert s.mode == "api"
     assert s.queries == len(example_cfg.all_search_queries())
     assert s.new_total == 4
-    assert s.new_relevant == 3  # 제목에 '타로' 가 있으면 관련 질문 (게임 질문은 제외어로 걸러야 함)
-    assert store.get("999")["product"] is None  # 신의소리는 신점·타로 얘기가 없으면 빼기
-    assert s.details == 1 and not s.errors  # 관련 질문만 상세를 가져옴 (999 는 관련 아님)
+    assert s.new_relevant == 4  # 제목에 '타로' 가 있으면 관련 질문 (게임 질문은 제외어로 걸러야 함)
+    assert store.get("999")["product"] == "sinui"  # '전남친 연락' 같은 재회 고민도 신의소리
+    assert s.details == 2 and not s.errors
     q = store.get("1001")
     assert q["product"] == "sinui" and "재회운" in q["categories"]
     assert q["answer_count"] == 0 and q["reward"] == 30 and q["body"]
     assert len(q["sources"]) == 2  # 두 검색어에서 모두 발견
     assert store.get("998")["product"] == "daksaren"
-    assert set(client.detail_calls) >= {"1001", "998"}
+    assert set(client.detail_calls) >= {"1001", "999", "998"}
     assert store.get("998")["detail_error"]  # 상세 실패도 기록 (다음에 재시도하지 않음)
 
     # 두 번째 실행: 새 질문 없음, 이미 가져온 상세는 다시 안 가져옴

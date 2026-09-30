@@ -39,7 +39,7 @@ def test_adds_myeongun_and_reorders_keeping_user_edits(tmp_path):
     logs = []
     assert migrate_config(path, store, log=logs.append) == [
         "명운연구소 추가, 제품 순서 변경", "제품별 유튜브·쓰레드 검색어(social) 추가",
-        "신의소리는 신점·타로만, 사주는 새 서비스 명연당으로, 치디핏 추가",
+        "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소",
     ]
     assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
     text = path.read_text(encoding="utf-8")
@@ -167,11 +167,15 @@ def test_sinui_split_updates_default_sinui_and_adds_products(tmp_path):
     from jisikin.migrations import _OLD_SINUI_KEYWORDS, _sinui_split
 
     example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
-    new_sinui_kw = "    keywords: [신점, 타로]\n"
+    import re
+
     old_kw = "    keywords: [" + ", ".join(_OLD_SINUI_KEYWORDS) + "]\n"
+    new_sinui_kw = re.search(r"^    keywords: \[신점, 타로,[^\]]*\]\n", example, re.M).group(0)
     # 예전 기본 신의소리 + 명연당·치디핏 없음 + 사이트 주소는 직접 넣은 상태
-    old = example.replace(new_sinui_kw, old_kw, 1).replace("    require_keyword: true     # 지식iN 은 신점·타로 질문만 (사주는 명연당)\n", "", 1)
-    old = old.replace('url: ""                   # 사이트 주소', 'url: "https://sinui.kr"   # 사이트 주소', 1)
+    old = example.replace(new_sinui_kw, old_kw, 1)
+    old = re.sub(r"^    require_keyword: true .*신점.*\n", "", old, count=1, flags=re.M)
+    old = old.replace('url: "https://voiceofgod.co.kr/"', 'url: "https://sinui.kr"', 1)
+    old = old.replace('url: "https://myeongunlab.co.kr/"', 'url: ""', 1)  # 비어 있던 주소는 채워짐
     parts = split_products(old)
     head, blocks, tail = parts
     old = join_products(head, [b for b in blocks if b[0] not in ("myeongyeon", "chidifit")], tail)
@@ -179,8 +183,10 @@ def test_sinui_split_updates_default_sinui_and_adds_products(tmp_path):
     cfg = parse_config(new)
     assert [p.id for p in cfg.products] == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
     s = cfg.product("sinui")
-    assert s.keywords == ["신점", "타로"] and s.require_keyword and s.url == "https://sinui.kr"
-    assert "재회 주파수" in s.social_queries()
+    assert s.keywords[:3] == ["신점", "타로", "재회"] and s.require_keyword and s.url == "https://sinui.kr"
+    assert "재회 주파수" in s.social_queries() and "짝사랑 주파수" in s.social_queries()
+    assert cfg.product("myeongun").url == "https://myeongunlab.co.kr/"
+    assert "한자" in cfg.product("myeongyeon").answer_guide
     # 신의소리 키워드를 직접 고쳐 둔 경우: 신의소리는 그대로, 새 서비스만 추가
     custom = old.replace(old_kw, "    keywords: [신점, 타로, 내 키워드]\n", 1)
     cfg2 = parse_config(_sinui_split(custom, example))

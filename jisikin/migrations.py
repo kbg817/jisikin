@@ -140,8 +140,8 @@ _URL_RE = re.compile(r"^    url:.*$", re.M)
 
 
 def _sinui_split(text: str, example_text: str) -> str | None:
-    """신의소리는 신점·타로만, 사주는 새 서비스 명연당으로. 치디핏 추가.
-    신의소리 블록은 예전 기본값 그대로일 때만 새 기본값으로 바꾸고, 사이트 주소·답변 가이드는 서버 것을 유지한다."""
+    """신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로. 치디핏 추가. 비어 있는 사이트 주소 채우기.
+    신의소리 블록은 예전 기본값 그대로일 때만 새 기본값으로 바꾸고, 답변 가이드·직접 넣은 사이트 주소는 서버 것을 유지한다."""
     parts, ex = split_products(text), split_products(example_text)
     if parts is None or ex is None:
         return None
@@ -158,6 +158,13 @@ def _sinui_split(text: str, example_text: str) -> str | None:
         if guide:
             block = _GUIDE_RE.sub(lambda _: guide.group(0), block, count=1)
         blocks = [(pid, block if pid == "sinui" else b) for pid, b in blocks]
+    # 사이트 주소가 비어 있는 제품은 예시 설정의 주소로 채운다
+    example_urls = {pid: m.group(0) for pid, b in ex[1] if (m := _URL_RE.search(b))}
+    blocks = [
+        (pid, _URL_RE.sub(lambda _: example_urls[pid], b, count=1)
+         if pid in example_urls and re.search(r'^    url:\s*(""|\'\')?\s*(#.*)?$', b, re.M) else b)
+        for pid, b in blocks
+    ]
     text2 = join_products(head, blocks, tail)
     order = ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit"]
     for pid in ("myeongyeon", "chidifit"):
@@ -181,7 +188,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-09-ai-sonnet", "AI 초안 모델 Sonnet 5.5 · 생각 깊이 low", _ai_sonnet),
     ("2026-10-social", "제품별 유튜브·쓰레드 검색어(social) 추가", _social),
     ("2026-10-no-bans", "제품별 답변 가이드에서 금지 표현 문장 삭제", _no_product_bans),
-    ("2026-10-sinui-split", "신의소리는 신점·타로만, 사주는 새 서비스 명연당으로, 치디핏 추가", _sinui_split),
+    ("2026-10-sinui-split", "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소", _sinui_split),
 ]
 
 
