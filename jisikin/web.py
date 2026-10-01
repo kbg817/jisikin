@@ -16,7 +16,7 @@ from pathlib import Path
 from flask import Flask, abort, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from . import auth
+from . import auth, link
 from . import config as config_mod
 from .collector import collect, effective_interval, estimate_api_calls_per_day, resolve_mode
 from .config import AppConfig, ConfigError
@@ -279,6 +279,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         # 클라우드(Render 등)는 HTTPS 를 앞단에서 처리하고 요청을 넘겨준다
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     limiter = auth.LoginLimiter()
+    tickets = link.TicketBook()
 
     # ------------------------------------------------------------ 공통
 
@@ -327,7 +328,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                 session.clear()
                 user = None
         g.user = user
-        if user or request.endpoint in ("login", "static", "healthz"):
+        if user or request.endpoint in ("login", "static", "healthz", "sso", "link_summary", "link_deactivate"):
             return None
         if request.path.startswith("/api/"):
             return jsonify(error="로그인이 필요합니다"), 401
@@ -357,6 +358,81 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     @app.get("/healthz")
     def healthz():
         return jsonify(ok=True)
+
+    # ------------------------------------------------------------ 업무 데스크 연동 (link.py)
+
+    @app.get("/api/link/summary")
+    def link_summary():
+        """업무 데스크 홈에 보여줄 숫자. 업무 데스크만 알고 있는 비밀값으로 확인한다."""
+        if not link.bearer_ok(request.headers.get("Authorization")):
+            abort(404)
+        cfg = state.cfg
+        kin = state.store.todo_counts(cfg.settings.max_age_days)["products"]
+        social = state.store.social_counts({pf: cfg.settings.social_age_days(pf) for pf in ("youtube", "threads")})
+        stats = state.store.answer_stats()
+        names = people()
+        total = lambda d: sum(p["total"] for p in d.values())  # noqa: E731
+        return jsonify(
+            title="답변·댓글 센터",
+            counts=[
+                {"label": "답변할 지식iN 질문", "value": total(kin)},
+                {"label": "아직 안 연 질문", "value": sum(p["new"] for p in kin.values())},
+                {"label": "유튜브 댓글 거리", "value": total(social.get("youtube", {}))},
+                {"label": "쓰레드 댓글 거리", "value": total(social.get("threads", {}))},
+                {"label": "오늘 답변·댓글 완료", "value": sum(s["today"] for s in stats.values())},
+            ],
+            staff=[
+                {
+                    "login": u, "name": names.get(u, u), "today": s["today"], "week": s["week"],
+                    "role": "admin" if u == auth.admin_username() else "staff",
+                }
+                for u, s in stats.items()
+                if u
+            ],
+            updated_at=iso(now_kst()),
+        )
+
+    @app.get("/sso")
+    def sso():
+        """업무 데스크에서 [열기]를 누르면 1회용 입장권을 들고 온다. 확인되면 바로 로그인."""
+        nxt = request.args.get("next") or "/"
+        nxt = nxt if nxt.startswith("/") and not nxt.startswith("//") else "/"
+        if not auth.auth_enabled():
+            return redirect(nxt)
+        try:
+            claims = link.verify_ticket(request.args.get("ticket", ""), tickets)
+        except link.TicketError as e:
+            return render_template("message.html", title="업무 데스크에서 다시 열어 주세요", message=str(e)), 403
+        if claims["role"] == "admin":
+            user = {"username": auth.admin_username(), "name": "관리자", "role": "admin"}
+        else:
+            username = str(claims["sub"]).strip().lower()
+            if not auth.USERNAME_RE.match(username) or username == auth.admin_username():
+                return render_template(
+                    "message.html", title="아이디를 확인해 주세요",
+                    message="업무 데스크 아이디를 답변 센터에서 쓸 수 없습니다. 영문 소문자·숫자 2~20자로 바꿔 주세요.",
+                ), 403
+            name = str(claims.get("name") or username)[:40]
+            # 직원 계정은 업무 데스크가 기준: 없으면 만들고 꺼져 있으면 다시 켠다. 기존 비밀번호는 그대로 둔다.
+            exists = state.store.get_user(username) is not None
+            state.store.save_user(username, name, None if exists else auth.hash_password(secrets.token_urlsafe(24)), active=True)
+            user = {"username": username, "name": name, "role": "staff"}
+        session.clear()
+        session.permanent = True
+        session["user"] = user
+        return redirect(nxt)
+
+    @app.post("/api/link/deactivate")
+    def link_deactivate():
+        """업무 데스크에서 직원을 사용 중지하면 여기서도 끈다."""
+        if not link.bearer_ok(request.headers.get("Authorization")):
+            abort(404)
+        username = str((request.get_json(silent=True) or {}).get("login", "")).strip().lower()
+        row = state.store.get_user(username) if username else None
+        if row and row["active"]:
+            state.store.save_user(username, row["name"], None, active=False)
+            state.log(f"업무 데스크에서 {row['name']} 계정 사용 중지")
+        return jsonify(ok=True, found=bool(row))
 
     @app.route("/login", methods=["GET", "POST"])
     def login():

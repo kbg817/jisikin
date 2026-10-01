@@ -17,3 +17,5 @@ services:
         value: admin
       - key: JISIKIN_SECRET_KEY       # 로그인 쿠키 서명용 (자동 생성)
         generateValue: true
+      - key: JISIKIN_LINK_SECRET      # 업무 데스크 연동용 (선택, 업무 데스크의 TOOL_LINK_SECRET 과 같은 값)
+        sync: false
