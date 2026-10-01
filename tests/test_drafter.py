@@ -114,7 +114,9 @@ def test_draft_uses_starred_examples_and_records_usage(example_cfg, monkeypatch)
     messages = _install_fake(monkeypatch, resp)
     generate_draft(example_cfg, example_cfg.product("daksaren"), QUESTION, store=store)
     system = messages.kwargs["system"][0]["text"]
-    assert "좋은 답변 예시" in system and "베끼지" in system
+    assert "실제 답변 예시" in system and "가장 중요한 기준" in system and "관계없는 이야기는 덧붙이지 않습니다" in system
+    user = messages.kwargs["messages"][0]["content"]
+    assert user.rstrip().endswith("예시와 관계없는 이야기는 넣지 마세요.")  # 질문 바로 뒤에 한 번 더
     used = [i for i in range(7) if f"예시 답변 {i} " in system]
     assert len(used) == MAX_EXAMPLES and 0 not in used  # ⭐ 뺀 것은 제외, 최근 ⭐ 5개
     assert used == sorted(used) and "다른 제품" not in system  # 순서 고정 (캐시 적중)
@@ -122,5 +124,5 @@ def test_draft_uses_starred_examples_and_records_usage(example_cfg, monkeypatch)
     assert usage["kinds"]["draft"]["calls"] == 1 and usage["cost"] > 0
 
     # 예시가 없으면 예시 문단도 없음
-    system_plain, _ = build_prompt(example_cfg, example_cfg.product("eumpa"), QUESTION, [])
-    assert "좋은 답변 예시" not in system_plain
+    system_plain, user_plain = build_prompt(example_cfg, example_cfg.product("eumpa"), QUESTION, [])
+    assert "실제 답변 예시" not in system_plain and "실제 답변 예시" not in user_plain
