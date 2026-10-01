@@ -147,5 +147,8 @@ def test_social_prompt_uses_youtube_examples(example_cfg):
     post = {"platform": "youtube", "title": "건선 관리", "body": "설명"}
     ex = [{"title": "모공각화증 루틴", "question": "", "answer": "영상 잘 봤어요! 보습 루틴 따라 해볼게요"}]
     system, _ = build_social_prompt(example_cfg, product, post, ex)
-    assert "좋은 댓글 예시" in system and "보습 루틴 따라 해볼게요" in system and "[영상]" in system
-    assert "좋은 댓글 예시" not in build_social_prompt(example_cfg, product, post)[0]
+    system, user = build_social_prompt(example_cfg, product, post, ex)
+    assert "실제 댓글 예시" in system and "보습 루틴 따라 해볼게요" in system and "[영상]" in system
+    assert "실제 댓글 예시" in user
+    plain_system, plain_user = build_social_prompt(example_cfg, product, post)
+    assert "실제 댓글 예시" not in plain_system and "실제 댓글 예시" not in plain_user
