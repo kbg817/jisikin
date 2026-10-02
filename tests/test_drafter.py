@@ -107,7 +107,7 @@ def test_draft_uses_starred_examples_and_records_usage(example_cfg, monkeypatch)
     from jisikin.storage import Store, now_kst
 
     store = Store(":memory:")
-    ids = [store.add_example("daksaren", f"예시 답변 {i} 입니다. 보습을 꾸준히 하세요.", title=f"질문 {i}") for i in range(7)]
+    ids = [store.add_example("daksaren", f"예시 답변 {i} 입니다. 보습을 꾸준히 하세요.", title=f"질문 {i}") for i in range(MAX_EXAMPLES + 2)]
     store.set_example_star(ids[0], False)
     store.add_example("sinui", "다른 제품 예시 답변입니다. 참고만 하세요.")
     resp = SimpleNamespace(
@@ -120,8 +120,8 @@ def test_draft_uses_starred_examples_and_records_usage(example_cfg, monkeypatch)
     assert "실제 답변 예시" in system and "가장 중요한 기준" in system and "관계없는 이야기는 덧붙이지 않습니다" in system
     user = messages.kwargs["messages"][0]["content"]
     assert user.rstrip().endswith("예시와 관계없는 이야기는 넣지 마세요.")  # 질문 바로 뒤에 한 번 더
-    used = [i for i in range(7) if f"예시 답변 {i} " in system]
-    assert len(used) == MAX_EXAMPLES and 0 not in used  # ⭐ 뺀 것은 제외, 최근 ⭐ 5개
+    used = [i for i in range(MAX_EXAMPLES + 2) if f"예시 답변 {i} " in system]
+    assert len(used) == MAX_EXAMPLES and 0 not in used  # ⭐ 뺀 것은 제외, 최근 ⭐ MAX_EXAMPLES 개
     assert used == sorted(used) and "다른 제품" not in system  # 순서 고정 (캐시 적중)
     usage = monthly_usage(store, f"{now_kst():%Y-%m}")
     assert usage["kinds"]["draft"]["calls"] == 1 and usage["cost"] > 0
