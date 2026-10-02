@@ -96,7 +96,7 @@ class Product:
         return _dedupe(queries)
 
 
-EXPOSURE_SOURCES = {"pc": "통합검색 PC", "mobile": "통합검색 모바일", "kin": "지식iN탭"}
+EXPOSURE_SOURCES = {"pc": "통합검색 PC", "mobile": "통합검색 모바일", "kin": "지식iN탭", "views": "지식iN 조회수순"}
 
 
 @dataclass
@@ -113,7 +113,8 @@ class Settings:
     api_daily_limit: int = 20000  # 네이버 검색 API 하루 호출 상한 (무료 25,000회를 넘지 않게). 0 이면 상한 없음
     exposure_interval_hours: int = 12
     exposure_top_n: int = 5
-    exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin"])
+    exposure_views_top_n: int = 10       # 지식iN 조회수순은 검색어마다 상위 몇 개까지 볼지
+    exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin", "views"])
     # 유튜브 · 쓰레드
     social_interval_hours: int = 8       # 자동 수집 주기(시간). 0 이면 끔
     social_max_age_days: int = 14        # (쓰레드) 이보다 오래된 글은 찾지 않고 할 일에서도 숨김
@@ -241,6 +242,7 @@ def parse_config(text: str) -> AppConfig:
     settings.results_per_keyword = max(1, min(settings.results_per_keyword, 100))
     settings.request_delay_seconds = max(0.0, settings.request_delay_seconds)
     settings.exposure_top_n = max(1, min(settings.exposure_top_n, 20))
+    settings.exposure_views_top_n = max(1, min(settings.exposure_views_top_n, 30))
     settings.social_interval_hours = max(0, settings.social_interval_hours)
     settings.social_max_age_days = max(1, min(settings.social_max_age_days, 365))
     settings.youtube_max_age_days = max(1, min(settings.youtube_max_age_days, 3650))
@@ -256,7 +258,7 @@ def parse_config(text: str) -> AppConfig:
         sources = _str_list(raw_sources, "settings.exposure_sources")
         bad = [s for s in sources if s not in EXPOSURE_SOURCES]
         if bad:
-            raise ConfigError(f"settings.exposure_sources 에는 pc, mobile, kin 만 쓸 수 있습니다. (잘못된 값: {', '.join(bad)})")
+            raise ConfigError(f"settings.exposure_sources 에는 pc, mobile, kin, views 만 쓸 수 있습니다. (잘못된 값: {', '.join(bad)})")
         settings.exposure_sources = list(dict.fromkeys(sources))
 
     ai = _typed(data.get("ai") or {}, AISettings, "ai")

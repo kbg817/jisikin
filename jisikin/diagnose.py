@@ -112,6 +112,17 @@ def run_diagnostics(
             except NaverError as e:
                 ok = False
                 lines.append(f"[오류] 상위노출 '{keyword}' {label}: {e}")
+    if samples and "views" in cfg.settings.exposure_sources:
+        try:
+            found = client.search_kin_by_views(samples[0], 5)
+            lines.append(f"[{'OK' if found else '??'}] 상위노출 '{samples[0]}' 지식iN 조회수순: 지식iN 글 {len(found)}개")
+            for n, it in enumerate(found[:3], start=1):
+                lines.append(f"     {n}. {it.title}  ({it.url})")
+            if not found:
+                lines += _page_debug(client, "지식iN 조회수순", {"지식iN 링크": r"docId=", "조회수": r"조회"})
+        except NaverError as e:
+            ok = False
+            lines.append(f"[오류] 상위노출 '{samples[0]}' 지식iN 조회수순: {e}")
     if samples and exposure_zero:
         ok = False
         lines.append("     통합검색에서 지식iN 글을 하나도 못 찾았습니다. 위 '진단' 줄을 Claude 에게 보내주세요.")

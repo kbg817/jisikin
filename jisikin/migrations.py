@@ -206,6 +206,23 @@ def _no_disclosure(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+_VIEWS_LINES = [('      keywords: [신점 잘보는곳, 타로 잘보는곳, 재회 타로, 전화 신점 추천]\n      regions: [서울, 인천, 부산, 대구]\n      region_terms: [신점, 점집]\n', '      keywords: [신점 잘보는곳, 타로 잘보는곳, 재회 타로, 전화 신점 추천, 사주나루]   # 사주나루: 경쟁사 (조회수 높은 글이 많음)\n      regions: [서울, 강남, 홍대, 인천, 부산, 대구, 대전, 광주, 울산, 수원, 성남, 고양, 용인, 부천, 창원, 청주]\n      region_terms: [신점, 타로]\n'), ('      regions: [서울, 인천, 부산, 대구]\n      region_terms: [사주, 철학관]\n', '      regions: [서울, 강남, 홍대, 인천, 부산, 대구, 대전, 광주, 울산, 수원, 성남, 고양, 용인, 부천, 창원, 청주]\n      region_terms: [사주, 철학관]\n')]
+_SOURCES_RE = re.compile(r"^  exposure_sources:[ \t]*\[pc, mobile, kin\][^\n]*\n", re.M)
+
+
+def _exposure_views(text: str, example_text: str) -> str | None:
+    """상위노출 확인에 '지식iN 조회수순' 추가, 신의소리·명연당 지역 확대(+ 지역×타로), 경쟁사 사주나루 검색어.
+    예전 기본값 그대로인 줄만 바꾼다."""
+    new = _SOURCES_RE.sub(
+        "  exposure_sources: [pc, mobile, kin, views]  # pc: 통합검색(PC), mobile: 통합검색(모바일), kin: 지식iN탭 정확도순, views: 지식iN 조회수순\n"
+        "  exposure_views_top_n: 10             # 지식iN 조회수순은 검색어마다 상위 몇 개까지 볼지 (예전 글이라도 많이 읽힌 글)\n",
+        text, count=1,
+    )
+    for old, repl in _VIEWS_LINES:
+        new = new.replace(old, repl, 1)
+    return None if new == text else new
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -219,6 +236,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-social-8h", "유튜브·쓰레드 찾는 간격 6시간 → 8시간", _social_8h),
     ("2026-10-safemom", "세이프맘 탄소매트 추가", _safemom),
     ("2026-10-no-disclosure", "AI 초안에서 운영자 소개 문장·링크 빼기", _no_disclosure),
+    ("2026-10-exposure-views", "상위노출에 지식iN 조회수순 추가, 지역 확대, 경쟁사 사주나루 검색어", _exposure_views),
 ]
 
 
