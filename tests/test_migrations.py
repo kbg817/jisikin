@@ -199,3 +199,13 @@ def test_social_interval_6_to_8_only_when_default():
 
     assert "social_interval_hours: 8   # x" in _social_8h("settings:\n  social_interval_hours: 6   # x\n", "")
     assert _social_8h("settings:\n  social_interval_hours: 12\n", "") is None
+
+
+def test_no_disclosure_replaces_old_default_lines():
+    from jisikin.migrations import _DISCLOSURE_LINES, _no_disclosure
+
+    old = "ai:\n  common_guide: |\n" + _DISCLOSURE_LINES[0][0] + "  social_guide: |\n" + _DISCLOSURE_LINES[1][0]
+    new = _no_disclosure(old, "")
+    assert "공정위" not in new and "운영하는 사람인데요\" 같은" in new and new.count("링크(URL)는 넣지 않습니다") == 2
+    assert _no_disclosure(new, "") is None
+    parse_config(EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"))
