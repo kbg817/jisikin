@@ -65,21 +65,21 @@ def test_examples_api_star_limit_edit_delete(web):
     state, client = web
     assert client.get("/examples").status_code == 200
     ids = []
-    for i in range(5):
+    for i in range(20):
         r = client.post("/api/examples/add", json={"product": "myeongun", "answer": f"작명 예시 답변 {i}번입니다. 발음과 뜻을 함께 봅니다."}, headers=H).get_json()
         assert r["starred"] is True
         ids.append(r["id"])
-    r = client.post("/api/examples/add", json={"product": "myeongun", "title": "개명", "answer": "여섯 번째 답변은 후보로만 들어갑니다."}, headers=H).get_json()
+    r = client.post("/api/examples/add", json={"product": "myeongun", "title": "개명", "answer": "스물한 번째 답변은 후보로만 들어갑니다."}, headers=H).get_json()
     assert r["starred"] is False
     sixth = r["id"]
     r = client.post(f"/api/examples/{sixth}/star", json={"starred": True}, headers=H)
-    assert r.status_code == 400 and "5개" in r.get_json()["error"]
+    assert r.status_code == 400 and "20개" in r.get_json()["error"]
     client.post(f"/api/examples/{ids[0]}/star", json={"starred": False}, headers=H)
     assert client.post(f"/api/examples/{sixth}/star", json={"starred": True}, headers=H).get_json() == {"ok": True}
 
     data = client.get("/api/examples").get_json()
     mg = next(p for p in data["products"] if p["id"] == "myeongun")
-    assert mg["starred"] == {"kin": 5, "youtube": 0} and data["max"] == 5
+    assert mg["starred"] == {"kin": 20, "youtube": 0} and data["max"] == 20
     assert [p["name"] for p in data["products"]] == ["신의소리", "명연당", "명운연구소", "닥사렌 모각크림", "음파쑥쑥", "치디핏", "세이프맘 탄소매트"]
 
     assert client.post(f"/api/examples/{sixth}/update", json={"answer": "짧음"}, headers=H).status_code == 400

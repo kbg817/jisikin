@@ -26,7 +26,7 @@ PRICES = {
 }
 USAGE_KINDS = {"draft": "답변 초안", "social": "댓글 초안", "keywords": "검색어 추천"}
 
-MAX_EXAMPLES = 5            # 제품마다 AI 초안에 넣을 모범 답변 수
+MAX_EXAMPLES = 20           # 제품·채널마다 AI 초안에 넣을 모범 답변 수 (질문 유형별로 골고루 넣을 수 있게)
 EXAMPLE_ANSWER_CHARS = 1500
 EXAMPLE_QUESTION_CHARS = 400
 
