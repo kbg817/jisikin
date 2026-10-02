@@ -12,7 +12,10 @@ def test_prompt_contains_guides(example_cfg):
     product = example_cfg.product("daksaren")
     system, user = build_prompt(example_cfg, product, QUESTION)
     assert "닥사렌 모각크림" in system and "피부과 진료" in system and "완치" not in system
-    assert "공정위" in system  # 공통 가이드
+    assert "공정위" not in system and "링크(URL)" in system and "larenkorea" not in system  # 운영자 소개·링크 넣지 않음
+    from jisikin.drafter import build_social_prompt
+    social, _ = build_social_prompt(example_cfg, product, {"platform": "youtube", "title": "t", "body": "b"})
+    assert "운영하는 사람인데요\" 같은" in social and "larenkorea" not in social
     assert "팔 오돌토돌" in user and "모공각화증" in user
 
 
