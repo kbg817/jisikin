@@ -550,6 +550,11 @@ class NaverClient:
         html = self._get_html(WEB_SEARCH_URL, params=params)
         return extract_questions(html, WEB_SEARCH_URL)
 
+    def search_kin_by_views(self, query: str, count: int = 10) -> list[RawQuestion]:
+        """지식iN 검색 '조회수순' 상위 글 (오래됐어도 많이 읽히는 글). API 에는 이 정렬이 없어 화면에서 읽는다."""
+        html = self._get_html(WEB_SEARCH_URL, params={"query": query, "section": "qna", "sort": "vcount"})
+        return extract_questions(html, WEB_SEARCH_URL)[:count]
+
     def fetch_list(self, url: str) -> list[RawQuestion]:
         html = self._get_html(url)
         return extract_questions(html, url)

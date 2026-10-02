@@ -7,7 +7,7 @@ const state = {
   view: "feed", // feed: 새 질문 / exposure: 상위노출 글 (둘 다 지식iN) / youtube · threads: 유튜브·쓰레드
   kinView: "feed", // 지식iN 탭에서 마지막으로 본 화면
   product: "", category: "", status: "todo", sort: "priority",
-  unanswered: false, low: false, q: "", expUnanswered: false,
+  unanswered: false, low: false, q: "", expUnanswered: false, expMode: "keyword",
   sStatus: "todo", sSort: "priority", ytSort: "views", ytKind: "", sLow: false, sQ: "",
   rPlatform: "", rState: "", rBy: "",
 };
@@ -749,6 +749,20 @@ function viewsBadges(q) {
   return out.join("");
 }
 
+// 조회수 높은 순: 여러 검색어에서 찾은 같은 글은 하나로 합치고, 조회수가 많은 글부터
+const FLAT_LIMIT = 300;
+function flatExposure(groups) {
+  const byId = new Map();
+  for (const g of groups) {
+    for (const q of g.posts) {
+      const cur = byId.get(q.doc_id);
+      if (cur) cur.keywords.push(g.keyword);
+      else byId.set(q.doc_id, { ...q, keywords: [g.keyword] });
+    }
+  }
+  return [...byId.values()].sort((a, b) => (b.views ?? -1) - (a.views ?? -1)).slice(0, FLAT_LIMIT);
+}
+
 function exposureCardHtml(q) {
   const p = productById(q.product);
   const terms = (q.matches || []).flatMap((m) => m.terms || []);
@@ -784,6 +798,15 @@ function renderExposure(groups) {
   }
   if (!groups.length) {
     list.innerHTML = `<div class="empty">아직 확인 기록이 없습니다.<br><span class="muted">[지금 확인]을 누르면 검색어별로 지금 상위에 노출된 지식iN 글을 찾아옵니다.</span></div>`;
+    return;
+  }
+  if (state.expMode === "views") {
+    const posts = flatExposure(groups);
+    list.innerHTML = posts.length
+      ? `<div class="flat-note muted">검색어 ${groups.length}개에서 찾은 글 ${posts.length}개 · 조회수 높은 순${posts.length >= FLAT_LIMIT ? ` (상위 ${FLAT_LIMIT}개)` : ""}</div>`
+        + posts.map((q) => exposureCardHtml(q).replace('<div class="ranks">',
+          `<div class="kw-chips">${q.keywords.slice(0, 4).map((k) => `<span class="kw-chip">🔎 ${esc(k)}</span>`).join("")}${q.keywords.length > 4 ? `<span class="muted">외 ${q.keywords.length - 4}개</span>` : ""}</div><div class="ranks">`)).join("")
+      : `<div class="empty">${state.expUnanswered ? "남은 글이 없습니다 (모두 처리함)" : "아직 찾은 글이 없습니다"}</div>`;
     return;
   }
   list.innerHTML = groups.map((g) => {
@@ -1080,6 +1103,7 @@ function bindFilter(sel, key, isCheck) {
   bindFilter("#f-low", "low", true);
   bindFilter("#f-q", "q");
   bindFilter("#x-unanswered", "expUnanswered", true);
+  bindFilter("#x-mode", "expMode");
   bindSeg("#s-status");
   $("#s-sort").addEventListener("input", (ev) => {
     state[sortKey()] = ev.target.value;

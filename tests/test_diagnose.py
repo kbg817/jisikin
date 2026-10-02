@@ -28,6 +28,11 @@ class Client:
             raise NaverError("네이버 통합검색 연결 실패: ProxyError")
         return self.integrated
 
+    def search_kin_by_views(self, query, count=10):
+        if self.fail:
+            raise NaverError("지식iN 연결 실패: ProxyError")
+        return self.integrated[:count]
+
     def fetch_detail(self, url):
         return self.detail
 

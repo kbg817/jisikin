@@ -252,6 +252,12 @@ class FakeClient:
             raise NaverError("연결 실패")
         return self.pages.get((keyword, "kin"), [])
 
+    def search_kin_by_views(self, keyword, count=10):
+        self.calls.append((keyword, "views"))
+        if self.fail:
+            raise NaverError("연결 실패")
+        return self.pages.get((keyword, "views"), [])
+
     def fetch_detail(self, url):
         doc_id = url.rsplit("=", 1)[1]
         self.detail_calls.append(doc_id)
@@ -283,6 +289,20 @@ def test_check_exposure_records_and_refreshes(tmp_path):
     client.detail_calls.clear()
     check_exposure(cfg, store, client=client, log=lambda m: None)
     assert client.detail_calls == []
+
+
+def test_views_source_finds_old_popular_posts():
+    cfg = parse_config(MINI)
+    cfg.settings.exposure_sources = ["views"]
+    cfg.settings.exposure_views_top_n = 12
+    store = Store(":memory:")
+    pages = {("인천 건선", "views"): [rq(i, f"인천 건선 {i}") for i in range(1, 16)]}
+    client = FakeClient(pages, {str(i): QuestionDetail(views=1000 * i) for i in range(1, 16)})
+    s = check_exposure(cfg, store, client=client, log=lambda m: None)
+    assert ("인천 건선", "views") in client.calls and not s.errors
+    g = next(g for g in store.latest_exposures() if g["keyword"] == "인천 건선")
+    assert len(g["posts"]) == 12  # 조회수순은 exposure_views_top_n 개까지
+    assert g["posts"][0]["ranks"] == {"views": 1}
 
 
 def test_check_exposure_stops_after_repeated_failures():
@@ -324,7 +344,7 @@ def test_api_exposure(web):
     assert [p["doc_id"] for p in only] == ["11"]
     meta = client.get("/api/meta").get_json()
     assert meta["exposure"]["keywords"] == len(state.cfg.exposure_targets())
-    assert [s["id"] for s in meta["exposure"]["sources"]] == ["pc", "mobile", "kin"]
+    assert [s["id"] for s in meta["exposure"]["sources"]] == ["pc", "mobile", "kin", "views"]
 
 
 def test_api_exposure_check_and_draft_product(web, monkeypatch):

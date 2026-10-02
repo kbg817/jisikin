@@ -4,6 +4,7 @@
 - pc     : 네이버 통합검색(PC) 결과에 나온 지식iN 글 순서
 - mobile : 네이버 통합검색(모바일) 결과에 나온 지식iN 글 순서
 - kin    : 지식iN 탭 정확도순 상위 글
+- views  : 지식iN 검색 조회수순 상위 글 (예전에 올라와 지금까지 많이 읽힌 글)
 노출 중인 글은 조회수가 계속 늘어나므로, 옛날 글이라도 답변을 달면 효과가 크다.
 """
 from __future__ import annotations
@@ -92,6 +93,8 @@ def check_exposure(
                 try:
                     if source == "kin":
                         items = client.search_kin_ranked(keyword, s.exposure_top_n)
+                    elif source == "views":
+                        items = client.search_kin_by_views(keyword, s.exposure_views_top_n)
                     else:
                         items = client.search_integrated(keyword, source)
                 except NaverError as e:
@@ -110,7 +113,7 @@ def check_exposure(
                         break
                     continue
                 fails = 0
-                items = items[: s.exposure_top_n]
+                items = items[: s.exposure_views_top_n if source == "views" else s.exposure_top_n]
                 for rq in items:
                     if store.upsert_raw(rq, f"노출:{keyword}", feed=False):
                         summary.new_posts += 1

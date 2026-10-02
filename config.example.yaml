@@ -23,7 +23,8 @@ settings:
   # --- 상위노출 글 (제품별 exposure 검색어를 네이버에서 검색했을 때 위에 뜨는 지식iN 글)
   exposure_interval_hours: 12          # 몇 시간마다 확인할지. 0 이면 끔 (순위는 천천히 바뀌므로 12~24 권장)
   exposure_top_n: 5                    # 검색어마다 상위 몇 개까지 볼지
-  exposure_sources: [pc, mobile, kin]  # pc: 통합검색(PC), mobile: 통합검색(모바일), kin: 지식iN탭 정확도순
+  exposure_sources: [pc, mobile, kin, views]  # pc: 통합검색(PC), mobile: 통합검색(모바일), kin: 지식iN탭 정확도순, views: 지식iN 조회수순
+  exposure_views_top_n: 10             # 지식iN 조회수순은 검색어마다 상위 몇 개까지 볼지 (예전 글이라도 많이 읽힌 글)
 
   # --- 유튜브 · 쓰레드 (제품별 social.keywords 로 검색. [설정] > API 키에 유튜브 키 / 쓰레드 토큰이 있을 때만)
   social_interval_hours: 8    # 몇 시간마다 찾을지. 0 이면 끔
@@ -128,9 +129,9 @@ products:
     watch_urls: []
     exposure:
       seeds: [신점, 타로]
-      keywords: [신점 잘보는곳, 타로 잘보는곳, 재회 타로, 전화 신점 추천]
-      regions: [서울, 인천, 부산, 대구]
-      region_terms: [신점, 점집]
+      keywords: [신점 잘보는곳, 타로 잘보는곳, 재회 타로, 전화 신점 추천, 사주나루]   # 사주나루: 경쟁사 (조회수 높은 글이 많음)
+      regions: [서울, 강남, 홍대, 인천, 부산, 대구, 대전, 광주, 울산, 수원, 성남, 고양, 용인, 부천, 창원, 청주]
+      region_terms: [신점, 타로]
     social:
       # 유튜브: 브랜드 언급 + 댓글 달 만한 재회·연애 주파수 영상
       keywords: [신의소리, 신점 후기, 전화 타로, 재회 주파수, 연애 주파수, 짝사랑 주파수]
@@ -166,7 +167,7 @@ products:
     exposure:
       seeds: [사주]
       keywords: [사주 잘보는곳, 궁합 잘보는곳, 신년운세 잘보는곳]
-      regions: [서울, 인천, 부산, 대구]
+      regions: [서울, 강남, 홍대, 인천, 부산, 대구, 대전, 광주, 울산, 수원, 성남, 고양, 용인, 부천, 창원, 청주]
       region_terms: [사주, 철학관]
     social:
       keywords: [명연당, 성명사주, 사주 풀이]

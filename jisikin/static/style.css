@@ -272,6 +272,9 @@ textarea.config {
 .kw-head .srcs { display: flex; gap: 6px; flex-wrap: wrap; }
 .src { background: var(--chip); border-radius: 4px; padding: 1px 7px; color: var(--muted); }
 .src.err { background: #fee2e2; color: #991b1b; cursor: help; }
+.kw-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; font-size: 12px; }
+.kw-chip { background: var(--chip); border-radius: 999px; padding: 0 8px; color: var(--muted); }
+.flat-note { font-size: 13px; margin: 0 0 10px; }
 .ranks { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
 .rank { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; color: var(--muted); }
 .rank b { color: var(--text); }
