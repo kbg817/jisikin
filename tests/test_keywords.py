@@ -263,7 +263,7 @@ def test_keywords_api(web, monkeypatch):
     assert client.get("/keywords").status_code == 200
     data = client.get("/api/keywords").get_json()
     dak = next(p for p in data["products"] if p["id"] == "daksaren")
-    assert dak["seeds"] == ["건선", "모공각화증"] and dak["max"] == 20  # 설정의 exposure.seeds 가 기본값
+    assert dak["seeds"] == ["건선", "모공각화증"] and dak["max"] == 40  # 설정의 exposure.seeds 가 기본값
     assert dak["used"] == [] and dak["generated_at"] is None
     assert any(k["keyword"] == "인천 건선" for k in dak["config_keywords"])
     assert data["sources"] == {"autocomplete": True, "searchad": False, "ai": False}
@@ -403,3 +403,28 @@ products:
     assert ensure_default_seeds(old, store) == ["닥사렌 모각크림"]
     assert seed_settings(store, "mine")["seeds"] == ["직접 넣은 것"]  # 화면에서 넣은 값이 우선
     assert ensure_default_seeds(old, store) == []
+
+
+def test_up_to_30_seeds_are_kept():
+    from jisikin.keywords import MAX_SEEDS, save_seed_settings, seed_settings
+    from jisikin.storage import Store
+
+    store = Store(":memory:")
+    save_seed_settings(store, "sinui", [f"키워드{i}" for i in range(35)], 20)
+    assert MAX_SEEDS == 30 and len(seed_settings(store, "sinui")["seeds"]) == 30
+
+
+def test_enabled_count_up_to_100_and_old_default_bumped(example_cfg):
+    from jisikin.keywords import DEFAULT_MAX, ensure_default_seeds, save_seed_settings, seed_settings
+    from jisikin.storage import Store
+
+    store = Store(":memory:")
+    save_seed_settings(store, "sinui", ["신점"], 20)    # 예전 기본값 그대로
+    save_seed_settings(store, "daksaren", ["건선"], 15)  # 직접 바꾼 값
+    ensure_default_seeds(example_cfg, store)
+    assert seed_settings(store, "sinui")["max"] == DEFAULT_MAX == 40
+    assert seed_settings(store, "daksaren")["max"] == 15
+    save_seed_settings(store, "sinui", ["신점"], 20)    # 한 번만 바꾸고, 다시 20 으로 정하면 그대로
+    ensure_default_seeds(example_cfg, store)
+    assert seed_settings(store, "sinui")["max"] == 20
+    assert save_seed_settings(store, "sinui", ["신점"], 500)["max"] == 100
