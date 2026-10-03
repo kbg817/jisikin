@@ -88,7 +88,7 @@ function render() {
 
   $("#kw-body").innerHTML = `
     <div class="panel kw-form">
-      <label>메인 키워드 <span class="muted">(쉼표로 여러 개)</span>
+      <label>메인 키워드 <span class="muted">(쉼표로 여러 개, 최대 30개)</span>
         <input id="kw-seeds" value="${esc(p.seeds.join(", "))}" placeholder="예: 건선, 모공각화증">
       </label>
       <label>켜 둘 검색어 수

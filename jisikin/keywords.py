@@ -34,7 +34,8 @@ MODIFIERS = ["추천", "원인", "증상", "방법", "병원", "잘하는 곳", 
 DEFAULT_MAX = 20
 DEFAULT_MIN_VOLUME = 50  # 월간 검색수(PC+모바일)가 이보다 적으면 켜지 않음 (검색광고 API 로 검색수를 알 때만)
 REFRESH_DAYS = 7
-MAX_VOLUME_LOOKUPS = 60  # 검색광고 API 로 검색수를 조회할 후보 수 (5개씩 묶어서 조회)
+MAX_SEEDS = 30           # 제품마다 메인 키워드 최대 개수
+MAX_VOLUME_LOOKUPS = 120  # 검색광고 API 로 검색수를 조회할 후보 수 (5개씩 묶어서 조회)
 
 AI_SYSTEM = """당신은 네이버 검색 마케팅을 잘 아는 도우미입니다.
 사람들이 네이버 검색창에 실제로 입력할 법한 짧은 검색어를 만듭니다."""
@@ -130,7 +131,7 @@ def save_seed_settings(store: Store, product_id: str, seeds: list[str], max_n: i
         s = re.sub(r"\s+", " ", s).strip()
         if s and compact(s) not in {compact(c) for c in clean}:
             clean.append(s)
-    cur.update(seeds=clean[:10], max=max(1, min(int(max_n), 60)))
+    cur.update(seeds=clean[:MAX_SEEDS], max=max(1, min(int(max_n), 60)))
     if min_volume is not None:
         cur["min_volume"] = max(0, int(min_volume))
     store.kv_set(f"seeds:{product_id}", cur)

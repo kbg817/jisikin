@@ -403,3 +403,12 @@ products:
     assert ensure_default_seeds(old, store) == ["닥사렌 모각크림"]
     assert seed_settings(store, "mine")["seeds"] == ["직접 넣은 것"]  # 화면에서 넣은 값이 우선
     assert ensure_default_seeds(old, store) == []
+
+
+def test_up_to_30_seeds_are_kept():
+    from jisikin.keywords import MAX_SEEDS, save_seed_settings, seed_settings
+    from jisikin.storage import Store
+
+    store = Store(":memory:")
+    save_seed_settings(store, "sinui", [f"키워드{i}" for i in range(35)], 20)
+    assert MAX_SEEDS == 30 and len(seed_settings(store, "sinui")["seeds"]) == 30
