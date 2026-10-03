@@ -92,7 +92,7 @@ function render() {
         <input id="kw-seeds" value="${esc(p.seeds.join(", "))}" placeholder="예: 건선, 모공각화증">
       </label>
       <label>켜 둘 검색어 수
-        <input id="kw-max" type="number" min="1" max="60" value="${p.max}">
+        <input id="kw-max" type="number" min="1" max="100" value="${p.max}">
       </label>
       <label title="검색광고 API 로 월간 검색수(PC+모바일)를 알 때, 이보다 적은 검색어는 켜지 않습니다">최소 월간 검색수
         <input id="kw-min" type="number" min="0" step="10" value="${p.min_volume}" ${data.sources.searchad ? "" : "disabled"}>

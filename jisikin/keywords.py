@@ -31,7 +31,9 @@ SOURCE_LABELS = {
     "manual": "직접",
 }
 MODIFIERS = ["추천", "원인", "증상", "방법", "병원", "잘하는 곳", "후기", "비용"]
-DEFAULT_MAX = 20
+DEFAULT_MAX = 40
+MAX_ENABLED = 100        # 제품마다 켜 둘 검색어 최대 개수
+OLD_DEFAULT_MAX = 20
 DEFAULT_MIN_VOLUME = 50  # 월간 검색수(PC+모바일)가 이보다 적으면 켜지 않음 (검색광고 API 로 검색수를 알 때만)
 REFRESH_DAYS = 7
 MAX_SEEDS = 30           # 제품마다 메인 키워드 최대 개수
@@ -121,6 +123,13 @@ def ensure_default_seeds(cfg: AppConfig, store: Store) -> list[str]:
         if seeds and store.kv_get(f"seeds:{p.id}") is None:
             save_seed_settings(store, p.id, seeds, DEFAULT_MAX)
             added.append(p.name)
+    # 한 번만: 예전 기본값(20개)으로 켜 두던 제품은 새 기본값(40개)으로
+    if not store.kv_get("migration:seeds-max-40"):
+        for p in cfg.products:
+            cur = store.kv_get(f"seeds:{p.id}")
+            if isinstance(cur, dict) and int(cur.get("max") or 0) == OLD_DEFAULT_MAX:
+                store.kv_set(f"seeds:{p.id}", {**cur, "max": DEFAULT_MAX})
+        store.kv_set("migration:seeds-max-40", iso(now_kst()))
     return added
 
 
@@ -131,7 +140,7 @@ def save_seed_settings(store: Store, product_id: str, seeds: list[str], max_n: i
         s = re.sub(r"\s+", " ", s).strip()
         if s and compact(s) not in {compact(c) for c in clean}:
             clean.append(s)
-    cur.update(seeds=clean[:MAX_SEEDS], max=max(1, min(int(max_n), 60)))
+    cur.update(seeds=clean[:MAX_SEEDS], max=max(1, min(int(max_n), MAX_ENABLED)))
     if min_volume is not None:
         cur["min_volume"] = max(0, int(min_volume))
     store.kv_set(f"seeds:{product_id}", cur)
