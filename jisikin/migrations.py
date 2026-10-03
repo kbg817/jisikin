@@ -223,6 +223,27 @@ def _exposure_views(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+def _add_calc_tools(block: str, line: str) -> str:
+    """calc_tools 가 없으면 name 줄 바로 아래에 넣는다 (블록 끝은 answer_guide 글 안이라 피한다)."""
+    if re.search(r"^    calc_tools:", block, re.M):
+        return block
+    return re.sub(r"^(    name:.*\n)", lambda m: m.group(1) + line + "\n", block, count=1, flags=re.M)
+
+
+_CALC_TOOLS = {"myeongyeon": "    calc_tools: [saju, name]", "myeongun": "    calc_tools: [name, hanja, saju]"}
+
+
+def _calc_tools(text: str, example_text: str) -> str | None:
+    """명연당(사주)·명운연구소(작명) AI 초안이 명연당 계산(만세력·이름 판정)을 쓰게 한다. 이미 calc_tools 가 있으면 그대로."""
+    parts = split_products(text)
+    if parts is None:
+        return None
+    head, blocks, tail = parts
+    blocks = [(pid, _add_calc_tools(b, _CALC_TOOLS[pid]) if pid in _CALC_TOOLS else b) for pid, b in blocks]
+    new = join_products(head, blocks, tail)
+    return None if new == text else new
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -237,6 +258,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-safemom", "세이프맘 탄소매트 추가", _safemom),
     ("2026-10-no-disclosure", "AI 초안에서 운영자 소개 문장·링크 빼기", _no_disclosure),
     ("2026-10-exposure-views", "상위노출에 지식iN 조회수순 추가, 지역 확대, 경쟁사 사주나루 검색어", _exposure_views),
+    ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
 ]
 
 

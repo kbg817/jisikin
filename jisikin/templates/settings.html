@@ -102,6 +102,25 @@
             앱 검수 전에는 내 계정 글만 검색됩니다. 토큰은 7일마다 자동으로 연장합니다.
           </p>
         </details>
+        <details style="margin:4px 0 8px;font-size:13px" {% if not calc_ok %}open{% endif %}>
+          <summary><b>명연당 계산 연결</b> <span class="muted">(선택 · 사주·이름 초안 정확도)</span></summary>
+          <p class="muted" style="font-size:12px;margin:6px 0">
+            명연당(사주)·명운연구소(작명) 초안이 간지·획수를 짐작하지 않고 <b>명연당과 같은 계산</b>(만세력·이름 판정)으로 씁니다.
+            명연당 서버는 계산만 하고 아무것도 저장하지 않습니다.
+          </p>
+          <ol style="padding-left:18px;margin:6px 0;font-size:12px">
+            <li>[새 열쇠 만들기] → [복사]</li>
+            <li>GitHub <b>kbg817/myeongyeondang</b> → Settings → Secrets and variables → Actions → New repository secret,
+              이름 <code>JISIKIN_CALC_KEY</code> 에 붙여넣기</li>
+            <li>그 저장소 Actions → <b>Ops - Set jisikin calc key (prod)</b> → Run workflow (action: <b>on</b>)</li>
+            <li>여기서 [키 저장] → 아래 [연결 점검]</li>
+          </ol>
+          <label>열쇠
+            <input name="MYD_CALC_KEY" id="calc-key" type="password" autocomplete="off" placeholder="{{ ('저장됨 ' ~ masked.MYD_CALC_KEY) if masked.MYD_CALC_KEY else '[새 열쇠 만들기]로 만들기' }}">
+          </label>
+          <button class="btn small" id="calc-new" type="button">새 열쇠 만들기</button>
+          <button class="btn small" id="calc-copy" type="button" hidden>복사</button>
+        </details>
         <p class="muted" style="font-size:12px;margin:4px 0 8px">
           비워둔 칸은 기존 값을 유지합니다. 지우려면 <b>삭제</b> 라고 입력하세요.
           키는 이 프로그램의 <code>.env</code> 파일에만 저장됩니다.
@@ -161,6 +180,9 @@
           </dd>
           <dt>AI 초안</dt>
           <dd class="{{ 'ok-dot' if ai_ok else 'no-dot' }}">{{ ai_reason }}</dd>
+          <dt>명연당 계산</dt>
+          <dd class="{{ 'ok-dot' if calc_ok else 'no-dot' }}">{{ calc_reason }}
+            {% if calc_products %}<br><span class="muted" style="font-size:12px">쓰는 제품: {{ calc_products|join(", ") }}</span>{% endif %}</dd>
         </dl>
         <div style="margin-top:12px">
           <button class="btn" id="d-run" type="button">연결 점검</button>
@@ -256,6 +278,19 @@ document.getElementById("d-run").addEventListener("click", async (ev) => {
   } finally {
     btn.disabled = false; btn.textContent = "연결 점검";
   }
+});
+// 명연당 계산 열쇠: 브라우저에서 무작위로 만들어 칸에 넣는다 (서버로는 [키 저장] 때만 감)
+document.getElementById("calc-new").addEventListener("click", () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const input = document.getElementById("calc-key");
+  input.type = "text"; input.value = key;
+  document.getElementById("calc-copy").hidden = false;
+});
+document.getElementById("calc-copy").addEventListener("click", async (ev) => {
+  const input = document.getElementById("calc-key");
+  try { await navigator.clipboard.writeText(input.value); } catch (e) { input.select(); document.execCommand("copy"); }
+  ev.currentTarget.textContent = "복사됨";
 });
 document.getElementById("d-copy").addEventListener("click", async () => {
   const text = document.getElementById("d-result").textContent;

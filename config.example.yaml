@@ -91,6 +91,9 @@ ai:
 #               검색어가 많을수록 확인이 오래 걸립니다. (검색어 1개 ≈ 네이버 요청 3~5번)
 #               ※ 메인 키워드(예: 건선)만 넣고 세부 검색어를 자동으로 만들려면
 #                  대시보드 [검색어 관리] 화면을 쓰세요. (지역 조합에는 여기 regions 가 쓰입니다)
+#  calc_tools : AI 초안이 명연당 계산을 쓸 항목 (선택). [설정] > 명연당 계산 연결에 열쇠가 있을 때만 동작
+#               saju(사주 만세력) / name(이름 판정: 발음오행·수리) / hanja(인명용 한자 찾기)
+#               간지·획수를 AI 가 짐작하지 않고 명연당 손님 분석과 같은 계산 결과로 씁니다.
 #
 #  띄어쓰기 규칙: 키워드에 넣은 띄어쓰기는 있어도/없어도 찾습니다.
 #      "키 크는 법" → '키크는법', '키 크는법', '키 크는 법' 모두 찾음
@@ -142,6 +145,7 @@ products:
 
   - id: myeongyeon
     name: 명연당
+    calc_tools: [saju, name]
     url: "https://myeongyeondang.com/"
     color: "#0891b2"
     min_score: 2
@@ -180,6 +184,7 @@ products:
 
   - id: myeongun
     name: 명운연구소
+    calc_tools: [name, hanja, saju]
     url: "https://myeongunlab.co.kr/"
     color: "#d97706"
     min_score: 2

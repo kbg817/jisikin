@@ -20,7 +20,7 @@ def _no_real_keys(monkeypatch):
     for key in (
         "NAVER_CLIENT_ID", "NAVER_CLIENT_SECRET", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
         "NAVER_AD_CUSTOMER_ID", "NAVER_AD_ACCESS_LICENSE", "NAVER_AD_SECRET_KEY", "JISIKIN_ADMIN_PASSWORD",
-        "YOUTUBE_API_KEY", "THREADS_ACCESS_TOKEN",
+        "YOUTUBE_API_KEY", "THREADS_ACCESS_TOKEN", "MYD_CALC_KEY", "MYD_CALC_URL",
     ):
         monkeypatch.delenv(key, raising=False)
     from jisikin import naver

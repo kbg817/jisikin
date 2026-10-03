@@ -209,3 +209,32 @@ def test_no_disclosure_replaces_old_default_lines():
     assert "공정위" not in new and "운영하는 사람인데요\" 같은" in new and new.count("링크(URL)는 넣지 않습니다") == 2
     assert _no_disclosure(new, "") is None
     parse_config(EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"))
+
+
+def test_calc_tools_added_to_myeongyeon_and_myeongun(tmp_path):
+    from jisikin.migrations import _calc_tools
+
+    example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    # 지금 서버 설정: calc_tools 가 없는 예시 설정
+    old = example.replace("    calc_tools: [saju, name]\n", "", 1).replace("    calc_tools: [name, hanja, saju]\n", "", 1)
+    assert all(not p.calc_tools for p in parse_config(old).products)
+    new = _calc_tools(old, example)
+    cfg = parse_config(new)
+    assert cfg.product("myeongyeon").calc_tools == ["saju", "name"]
+    assert cfg.product("myeongun").calc_tools == ["name", "hanja", "saju"]
+    assert not cfg.product("sinui").calc_tools and not cfg.product("daksaren").calc_tools
+    assert new == example  # 예시 설정과 같은 자리에 들어감
+    assert _calc_tools(new, example) is None  # 이미 있으면 그대로
+    # 직접 바꿔 둔 값은 그대로
+    mine = new.replace("    calc_tools: [name, hanja, saju]\n", "    calc_tools: [name]\n", 1)
+    assert _calc_tools(mine, example) is None
+
+    path = tmp_path / "config.yaml"
+    path.write_text(old, encoding="utf-8")
+    store = Store(":memory:")
+    from jisikin.migrations import MIGRATIONS
+
+    for key, _, _ in MIGRATIONS[:-1]:
+        store.kv_set(f"migration:{key}", "done")  # 서버에서 이미 한 업데이트
+    assert migrate_config(path, store) == ["명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀"]
+    assert load_config(path).product("myeongun").calc_tools == ["name", "hanja", "saju"]

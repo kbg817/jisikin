@@ -9,6 +9,7 @@ from . import __version__
 from . import config as config_mod
 from .collector import effective_interval, estimate_api_calls_per_day, make_client, resolve_mode
 from .config import AppConfig
+from .calc import calc_status, check_connection
 from .drafter import ai_status
 from .exposure import all_targets
 from .naver import NaverClient, NaverError, debug_snippets
@@ -21,6 +22,7 @@ def run_diagnostics(
     client: NaverClient | None = None,
     store: Store | None = None,
     ad_client: SearchAdClient | None = None,
+    calc_session=None,
 ) -> tuple[bool, list[str]]:
     ok = True
     lines = [f"지식iN 수집기 {__version__} / Python {platform.python_version()} / {platform.system()} {platform.release()}"]
@@ -152,6 +154,15 @@ def run_diagnostics(
 
     ai_ok, reason = ai_status()
     lines.append(f"[{'OK' if ai_ok else '--'}] AI (답변 초안 · 검색어 추천): {reason}")
+    calc_products = [p.name for p in cfg.products if p.calc_tools]
+    if calc_products:
+        if calc_status()[0]:
+            calc_ok, calc_msg = check_connection(session=calc_session)
+            if not calc_ok:
+                ok = False
+            lines.append(f"[{'OK' if calc_ok else '오류'}] 명연당 계산 ({', '.join(calc_products)} 초안): {calc_msg}")
+        else:
+            lines.append(f"[--] 명연당 계산 ({', '.join(calc_products)} 초안): {calc_status()[1]}")
     return ok, lines
 
 

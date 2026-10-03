@@ -30,7 +30,10 @@ ENV_KEYS = (
     "NAVER_AD_SECRET_KEY",
     "YOUTUBE_API_KEY",
     "THREADS_ACCESS_TOKEN",
+    "MYD_CALC_KEY",  # 명연당 계산 연결 (AI 초안의 사주·이름 계산, calc.py)
 )
+
+CALC_TOOL_KEYS = ("saju", "name", "hanja")
 
 DEFAULT_AI_MODEL = "claude-sonnet-5-5"
 
@@ -85,6 +88,8 @@ class Product:
     answer_guide: str = ""
     exposure: Exposure = field(default_factory=Exposure)
     social: Social = field(default_factory=Social)
+    # AI 초안이 명연당 계산을 쓸 항목: saju(사주) / name(이름 판정) / hanja(한자 찾기)
+    calc_tools: list[str] = field(default_factory=list)
 
     def social_queries(self) -> list[str]:
         return _dedupe(self.social.keywords or [self.name])
@@ -321,6 +326,10 @@ def parse_config(text: str) -> AppConfig:
         )
         if exposure.regions and not exposure.region_terms:
             raise ConfigError(f"{where}.exposure 에 regions 를 넣었다면 region_terms (예: [건선, 건선 피부과]) 도 넣어 주세요.")
+        calc_tools = _str_list(rp.get("calc_tools"), f"{where}.calc_tools")
+        bad = [t for t in calc_tools if t not in CALC_TOOL_KEYS]
+        if bad:
+            raise ConfigError(f"{where}.calc_tools 에는 saju, name, hanja 만 쓸 수 있습니다. (잘못된 값: {', '.join(bad)})")
         rs = rp.get("social") or {}
         if not isinstance(rs, dict):
             raise ConfigError(f"{where}.social 은 keywords 항목을 가져야 합니다. 예) social: {{keywords: [신의소리]}}")
@@ -340,6 +349,7 @@ def parse_config(text: str) -> AppConfig:
                 color=str(rp.get("color") or "#2563eb").strip(),
                 answer_guide=str(rp.get("answer_guide") or "").strip(),
                 exposure=exposure,
+                calc_tools=list(dict.fromkeys(calc_tools)),
                 social=social,
             )
         )

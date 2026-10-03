@@ -21,6 +21,7 @@ from . import config as config_mod
 from .collector import collect, effective_interval, estimate_api_calls_per_day, resolve_mode
 from .config import AppConfig, ConfigError
 from .diagnose import run_diagnostics
+from .calc import calc_status
 from .drafter import MAX_EXAMPLES, USAGE_KINDS, DraftError, ai_status, generate_draft, generate_social_draft, monthly_usage
 from .exposure import all_targets, check_exposure
 from .keywords import SOURCE_LABELS, due_products, ensure_default_seeds, generate_for_product, save_seed_settings, seed_settings
@@ -1067,6 +1068,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                 error = str(e)
         cfg = state.cfg
         ai_ok, ai_reason = ai_status()
+        calc_ok, calc_reason = calc_status()
         stats = state.store.answer_stats()
         users = []
         for u in state.store.list_users():
@@ -1101,6 +1103,9 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             interval_setting=cfg.settings.interval_minutes,
             ai_ok=ai_ok,
             ai_reason=ai_reason,
+            calc_ok=calc_ok,
+            calc_reason=calc_reason,
+            calc_products=[p.name for p in cfg.products if p.calc_tools],
             ai_model=cfg.ai.model,
             ai_effort=cfg.ai.effort,
             ai_usage=this_month,
