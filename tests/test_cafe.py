@@ -112,3 +112,10 @@ def test_cafe_collect_api_needs_key(tmp_path, monkeypatch):
     state.store.classify_social(social_matcher(state.cfg))
     items = client.get("/api/social?platform=cafe").get_json()["items"]
     assert [i["post_id"] for i in items] == ["cafe:sajupuli/12345"]
+
+
+def test_collect_cafe_auth_error_explains_how_to_enable(tmp_path, example_cfg):
+    store = Store(tmp_path / "db.sqlite")
+    err = NaverError("NAVER API HUB 401 요청한 API는 이 Application에서 활성화되어 있지 않습니다.", fatal=True, auth=True)
+    s = collect_cafe(example_cfg, store, FakeClient(error=err), log=lambda m: None)
+    assert "카페글" in s.errors[0]
