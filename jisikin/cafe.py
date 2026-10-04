@@ -17,6 +17,10 @@ from .social import SocialPost, social_matcher
 from .storage import Store
 
 MAX_FAILS = 3
+CAFE_API_HINT = (
+    "네이버클라우드 콘솔 → NAVER API HUB → Application 에서 지식iN 키의 [수정]을 눌러 "
+    "검색 API 중 '카페글'도 선택(체크)한 뒤 저장해 주세요."
+)
 _ARTICLE_RE = re.compile(r"cafe\.naver\.com/([A-Za-z0-9_\-]+)/(\d+)")
 
 
@@ -79,7 +83,10 @@ def collect_cafe(
             try:
                 items = client.search_cafe(q, cfg.settings.cafe_results, sort="date")
             except NaverError as e:
-                summary.errors.append(f"카페 '{q}': {e}")
+                msg = str(e)
+                if e.auth:  # 지식iN 은 되는데 카페만 막힌 경우: 키에 '카페글' 검색이 꺼져 있음
+                    msg += f" → {CAFE_API_HINT}"
+                summary.errors.append(f"카페 '{q}': {msg}")
                 log(f"  ! 카페 '{q}' 검색 실패: {e}")
                 fails += 1
                 if e.fatal or fails >= MAX_FAILS:

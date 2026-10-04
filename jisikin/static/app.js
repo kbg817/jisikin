@@ -689,8 +689,8 @@ async function loadSocial() {
   const list = $("#list");
   if (!data.items.length) {
     const name = view === "youtube" ? "영상" : "글";
-    if (!meta.social.platforms[view]) list.innerHTML = `<div class="empty">아직 찾아온 ${name}이 없어요.<br><span class="muted">키를 넣으면 여기에 쌓입니다.</span></div>`;
-    else if (state.sStatus === "todo" && !state.sQ) list.innerHTML = `<div class="empty"><div class="big">🎉 할 일을 다 끝냈어요</div><span class="muted">${meta.social.interval_hours ? `새 ${name}은 ${meta.social.interval_hours}시간마다 자동으로 찾아와요.` : "[지금 찾기]를 누르면 새로 찾아옵니다."}</span></div>`;
+    if (!meta.social.platforms[view] && view !== "cafe") list.innerHTML = `<div class="empty">아직 찾아온 ${name}이 없어요.<br><span class="muted">키를 넣으면 여기에 쌓입니다.</span></div>`;
+    else if (state.sStatus === "todo" && !state.sQ) list.innerHTML = `<div class="empty"><div class="big">🎉 할 일을 다 끝냈어요</div><span class="muted">${view === "cafe" ? (meta.cafe.interval_minutes ? `새 글은 ${meta.cafe.interval_minutes}분마다 자동으로 찾아와요.` : "[지금 찾기]를 누르면 새로 찾아옵니다.") : meta.social.interval_hours ? `새 ${name}은 ${meta.social.interval_hours}시간마다 자동으로 찾아와요.` : "[지금 찾기]를 누르면 새로 찾아옵니다."}</span></div>`;
     else list.innerHTML = `<div class="empty">해당하는 ${name}이 없어요.<br><span class="muted">위의 조건을 바꿔 보세요.</span></div>`;
     return;
   }
@@ -1008,7 +1008,7 @@ document.addEventListener("click", async (ev) => {
     if (next === state.view) return;
     state.view = next;
     if (groupOf(next) === "kin") state.kinView = next;
-    saveFilters(); renderViews(); renderTabs(); renderChips(); renderNotice();
+    saveFilters(); renderViews(); renderTabs(); renderChips(); renderNotice(); renderSocialBar();
     $("#list").innerHTML = "";
     loadList();
     return;
