@@ -41,6 +41,7 @@ def test_adds_myeongun_and_reorders_keeping_user_edits(tmp_path):
         "명운연구소 추가, 제품 순서 변경", "제품별 유튜브·쓰레드 검색어(social) 추가",
         "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소",
         "세이프맘 탄소매트 추가",
+        "신의소리·명연당·명운연구소 지식iN 답변 500byte 이하",
     ]
     assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit", "safemom"]
     text = path.read_text(encoding="utf-8")
@@ -238,3 +239,15 @@ def test_calc_tools_added_to_myeongyeon_and_myeongun(tmp_path):
         store.kv_set(f"migration:{key}", "done")  # 서버에서 이미 한 업데이트
     assert migrate_config(path, store) == ["명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀"]
     assert load_config(path).product("myeongun").calc_tools == ["name", "hanja", "saju"]
+
+
+def test_max_bytes_added_once_to_three_products():
+    from jisikin.migrations import _max_bytes
+
+    example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    old = example.replace("    max_bytes: 500            # 지식iN 답변 최대 길이 (한글 1자=2byte → 약 240자)\n", "")
+    assert "max_bytes" not in old.split("products:")[1]
+    new = _max_bytes(old, example)
+    cfg = parse_config(new)
+    assert [p.id for p in cfg.products if p.max_bytes == 500] == ["sinui", "myeongyeon", "myeongun"]
+    assert new == example and _max_bytes(new, example) is None
