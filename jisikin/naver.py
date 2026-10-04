@@ -38,6 +38,14 @@ MOBILE_USER_AGENT = (
 #  - developers : 기존 네이버 개발자센터 (예전에 발급받은 키)
 HUB_API_URL = "https://naverapihub.apigw.ntruss.com/search/v1/kin"
 API_URL = "https://openapi.naver.com/v1/search/kin.json"
+# 검색 종류별 주소 (kin: 지식iN, cafearticle: 네이버 카페 글)
+API_URLS = {
+    "kin": {"hub": HUB_API_URL, "developers": API_URL},
+    "cafearticle": {
+        "hub": "https://naverapihub.apigw.ntruss.com/search/v1/cafearticle",
+        "developers": "https://openapi.naver.com/v1/search/cafearticle.json",
+    },
+}
 API_PROVIDERS = ("hub", "developers")
 API_PROVIDER_NAMES = {"hub": "NAVER API HUB", "developers": "네이버 개발자센터"}
 _provider_cache: dict[str, str] = {}  # Client ID → 성공한 발급처 (매번 두 곳을 시도하지 않도록)
@@ -489,6 +497,13 @@ class NaverClient:
 
     def search_api(self, query: str, count: int = 50, sort: str = "date") -> list[RawQuestion]:
         """sort: date(최신순) / sim(정확도순)"""
+        return parse_api_items(self._search_api(query, count, sort, "kin"))
+
+    def search_cafe(self, query: str, count: int = 50, sort: str = "date") -> list[dict]:
+        """네이버 카페 글 검색 (API). 항목: title, link, description, cafename, cafeurl (작성일은 주지 않음)."""
+        return self._search_api(query, count, sort, "cafearticle")
+
+    def _search_api(self, query: str, count: int, sort: str, kind: str) -> list[dict]:
         if not self.credentials:
             raise NaverError("네이버 API 키가 없습니다. [설정] > API 키에 Client ID / Secret 을 넣어주세요.", fatal=True)
         known = self.api_provider
@@ -496,7 +511,7 @@ class NaverClient:
         auth_errors: list[NaverError] = []
         for provider in providers:
             try:
-                items = self._search_api_once(provider, query, count, sort)
+                items = self._search_api_once(provider, query, count, sort, kind)
             except NaverError as e:
                 if e.auth and len(providers) > 1:
                     auth_errors.append(e)
@@ -512,16 +527,15 @@ class NaverClient:
             auth=True,
         )
 
-    def _search_api_once(self, provider: str, query: str, count: int, sort: str) -> list[RawQuestion]:
+    def _search_api_once(self, provider: str, query: str, count: int, sort: str, kind: str = "kin") -> list[dict]:
         cid, secret = self.credentials
         name = API_PROVIDER_NAMES[provider]
         params = {"query": query, "display": max(1, min(count, 100)), "start": 1, "sort": sort}
+        url = API_URLS[kind][provider]
         if provider == "hub":
-            url = HUB_API_URL
             params["format"] = "json"
             headers = {"X-NCP-APIGW-API-KEY-ID": cid, "X-NCP-APIGW-API-KEY": secret}
         else:
-            url = API_URL
             headers = {"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": secret}
         if self.budget is not None:
             self.budget.check()
@@ -542,7 +556,7 @@ class NaverClient:
             data = r.json()
         except ValueError as e:
             raise NaverError("네이버 API 응답을 읽을 수 없습니다.") from e
-        return parse_api_items(data.get("items") or [])
+        return data.get("items") or []
 
     # --- 웹 검색 (API 키 없을 때)
     def search_web(self, query: str, page: int = 1) -> list[RawQuestion]:

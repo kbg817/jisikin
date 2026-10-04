@@ -8,6 +8,7 @@ let channel = "kin"; // kin: 지식iN 답변 / youtube: 유튜브 댓글
 const WORDS = {
   kin: { q: "질문", a: "답변", done: "✓ 답변 달았어요", where: "지식iN" },
   youtube: { q: "영상", a: "댓글", done: "✓ 댓글 달았어요", where: "유튜브" },
+  cafe: { q: "카페 글", a: "댓글", done: "✓ 댓글 달았어요", where: "카페" },
 };
 const W = () => WORDS[channel];
 
@@ -77,7 +78,7 @@ function render() {
   $("#ex-channels").innerHTML = data.channels.map((c) => {
     const n = data.items.filter((x) => x.channel === c.id && x.starred).length;
     return `<button type="button" data-channel="${esc(c.id)}" class="${c.id === channel ? "on" : ""}" aria-selected="${c.id === channel}">
-      <span class="pf ${c.id === "kin" ? "kin" : "yt"} mini">${c.id === "kin" ? "N" : "▶"}</span>${esc(c.name)} <span class="muted">⭐ ${n}</span></button>`;
+      <span class="pf ${({ kin: "kin", cafe: "cf" })[c.id] || "yt"} mini">${({ kin: "N", cafe: "C" })[c.id] || "▶"}</span>${esc(c.name)} <span class="muted">⭐ ${n}</span></button>`;
   }).join("");
 
   $("#ex-tabs").innerHTML = data.products.map((p) => `
@@ -92,7 +93,9 @@ function render() {
   const full = (p.starred[channel] || 0) >= data.max;
   const hint = channel === "kin"
     ? "예전에 채택된 답변 등을 붙여넣으세요"
-    : "반응이 좋았던 우리 댓글(좋아요·답글이 많이 달린 것 등)을 붙여넣으세요";
+    : channel === "cafe"
+      ? "반응이 좋았던 우리 카페 댓글(글쓴이가 고맙다고 한 것 등)을 붙여넣으세요"
+      : "반응이 좋았던 우리 댓글(좋아요·답글이 많이 달린 것 등)을 붙여넣으세요";
 
   $("#ex-body").innerHTML = `
     <div class="panel" style="--c:${esc(p.color)}">

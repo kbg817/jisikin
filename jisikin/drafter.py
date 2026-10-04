@@ -115,6 +115,7 @@ SOCIAL_SYSTEM_TEMPLATE = """당신은 {where}에 달 {kind} 초안을 작성하�
 _SOCIAL_KINDS = {
     "youtube": ("유튜브 영상", "유튜브", "댓글"),
     "threads": ("쓰레드(Threads) 글", "쓰레드", "답글"),
+    "cafe": ("네이버 카페 글", "카페", "댓글"),
 }
 
 
@@ -248,7 +249,7 @@ def build_social_prompt(
 ) -> tuple[str, str]:
     where, where_short, kind = _SOCIAL_KINDS.get(post.get("platform"), _SOCIAL_KINDS["youtube"])
     examples_block = (
-        SOCIAL_EXAMPLES_TEMPLATE.format(kind=kind, where_short=where_short, items=_example_items(examples, "영상", kind))
+        SOCIAL_EXAMPLES_TEMPLATE.format(kind=kind, where_short=where_short, items=_example_items(examples, "영상" if post.get("platform") == "youtube" else "글", kind))
         if examples else ""
     )
     system = SOCIAL_SYSTEM_TEMPLATE.format(
@@ -262,7 +263,7 @@ def build_social_prompt(
     )
     parts = [f"아래 {where}에 달 {kind} 초안을 작성해 주세요.\n"]
     if post.get("author"):
-        parts.append(f"[작성자] {post['author']}")
+        parts.append(f"[{'카페' if post.get('platform') == 'cafe' else '작성자'}] {post['author']}")
     if post.get("title"):
         parts.append(f"[제목]\n{post['title']}")
     parts.append(f"[{'설명' if post.get('platform') == 'youtube' else '본문'}]\n{(post.get('body') or '(없음)')[:3000]}")
@@ -275,8 +276,9 @@ def build_social_prompt(
 
 
 def generate_social_draft(cfg: AppConfig, product: Product, post: dict, store: Store | None = None) -> str:
-    # 유튜브 댓글 예시 (쓰레드 답글도 댓글 말투라 같은 예시를 참고)
-    examples = store.starred_examples(product.id, MAX_EXAMPLES, channel="youtube") if store else []
+    # 카페는 카페 댓글 예시, 유튜브·쓰레드는 유튜브 댓글 예시 (쓰레드 답글도 댓글 말투라 같은 예시를 참고)
+    channel = "cafe" if post.get("platform") == "cafe" else "youtube"
+    examples = store.starred_examples(product.id, MAX_EXAMPLES, channel=channel) if store else []
     system, user = build_social_prompt(cfg, product, post, examples)
     text = ask_claude(cfg, system, user, store=store, kind="social")
     if not text:

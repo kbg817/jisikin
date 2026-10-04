@@ -12,13 +12,14 @@ const state = {
   rPlatform: "", rState: "", rBy: "",
 };
 let resultItems = null;
-const PLATFORM_NAMES = { youtube: "유튜브", threads: "쓰레드" };
+const PLATFORM_NAMES = { youtube: "유튜브", threads: "쓰레드", cafe: "네이버 카페" };
 // 유튜브는 조회수 많은 순(= 사람들이 많이 보는 영상)이 기본
 const SORT_OPTIONS = {
   youtube: [["views", "조회수 많은 순"], ["latest", "최신순"]],
   threads: [["priority", "추천순"], ["latest", "최신순"]],
+  cafe: [["latest", "최신순"], ["priority", "추천순"]],
 };
-const isSocial = () => state.view === "youtube" || state.view === "threads";
+const isSocial = () => state.view === "youtube" || state.view === "threads" || state.view === "cafe";
 const groupOf = (view) => (view === "feed" || view === "exposure" ? "kin" : view);
 const sortKey = () => (state.view === "youtube" ? "ytSort" : "sSort");
 
@@ -176,7 +177,10 @@ function renderViews() {
 // 상단 탭 옆 숫자: 처리할 글 수
 function renderGroupCounts() {
   const sum = (counts) => Object.values(counts || {}).reduce((a, p) => a + p.total, 0);
-  const n = { kin: sum(meta.counts.products), youtube: sum(meta.social.counts.youtube), threads: sum(meta.social.counts.threads) };
+  const n = {
+    kin: sum(meta.counts.products), youtube: sum(meta.social.counts.youtube),
+    threads: sum(meta.social.counts.threads), cafe: sum(meta.social.counts.cafe),
+  };
   for (const [k, v] of Object.entries(n)) {
     const el = $(`#cnt-${k}`);
     el.textContent = v ? num(v) : "";
@@ -236,7 +240,24 @@ function renderExposureBar() {
   btn.textContent = checking ? "확인 중…" : "지금 확인";
 }
 
+function renderCafeBar() {
+  const x = meta.cafe;
+  const parts = [];
+  const busy = meta.running && meta.running_kind === "cafe";
+  if (busy) parts.push("<b>찾는 중…</b>");
+  else if (x.last_run) parts.push(`${relTime(x.last_run.finished_at || x.last_run.started_at)} 새로 찾음`);
+  else parts.push("아직 찾아본 적이 없어요");
+  if (x.interval_minutes) parts.push(`${x.interval_minutes}분마다 자동${x.next_at && !meta.running ? ` (다음 ${untilTime(x.next_at)})` : ""}`);
+  parts.push(`검색어 ${x.queries}개`);
+  $("#social-status").innerHTML = parts.join(" · ");
+  const btn = $("#social-collect-btn");
+  btn.disabled = busy || !x.enabled || !x.queries;
+  btn.textContent = busy ? "찾는 중…" : "지금 찾기";
+  btn.removeAttribute("title");
+}
+
 function renderSocialBar() {
+  if (state.view === "cafe") return renderCafeBar();
   const x = meta.social;
   const parts = [];
   const on = x.platforms[state.view];
@@ -362,6 +383,15 @@ function renderNotice() {
 function renderSocialNotice() {
   const name = PLATFORM_NAMES[state.view];
   const notes = [];
+  if (state.view === "cafe") {
+    const errs = meta.cafe.last_run?.errors || [];
+    if (errs.length) notes.push(`<b>마지막으로 찾을 때 오류 ${errs.length}건</b><ul>${errs.slice(0, 5).map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`);
+    if (!meta.cafe.enabled) notes.push("네이버 API 키가 없어 카페 글을 찾지 않습니다. 지식iN 과 같은 키를 씁니다.");
+    else if (!meta.cafe.queries && meta.user.role === "admin") notes.push("카페 검색어가 없습니다. <a href='/settings'>설정</a>에서 제품에 <b>cafe: keywords</b> 를 넣어 주세요.");
+    notes.push(`<button class="close" data-dismiss="cafe-help" title="닫기" aria-label="닫기">×</button>카페 글에 댓글을 달려면 그 카페에 <b>가입</b>해야 하는 경우가 많아요. 제목을 누르면 카페 글이 새 창으로 열립니다.`);
+    $("#notice").innerHTML = notes.filter((n) => !(n.includes("cafe-help") && dismissed("cafe-help"))).map((n) => `<div class="notice">${n}</div>`).join("");
+    return;
+  }
   const errors = (meta.social.last_run?.errors || []).filter((e) => e.startsWith(name) || !/^(유튜브|쓰레드) /.test(e));
   if (errors.length) {
     notes.push(`<b>마지막으로 찾을 때 오류 ${errors.length}건</b><ul>${errors.slice(0, 5).map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`);
@@ -428,7 +458,8 @@ function resultStateHtml(i) {
   const c = i.check;
   const out = [];
   if (!c) {
-    if (i.platform === "threads") out.push(`<span class="rs-badge none" title="Meta 앱 검수 전에는 남의 글에 단 답글을 확인할 수 없습니다">쓰레드는 자동 확인 안 함</span>`);
+    if (i.platform === "cafe") out.push(`<span class="rs-badge none" title="카페 댓글은 회원만 볼 수 있는 경우가 많아 자동으로 확인하지 않습니다">카페는 자동 확인 안 함</span>`);
+    else if (i.platform === "threads") out.push(`<span class="rs-badge none" title="Meta 앱 검수 전에는 남의 글에 단 답글을 확인할 수 없습니다">쓰레드는 자동 확인 안 함</span>`);
     else out.push(`<span class="rs-badge none">확인 전</span><span>다음 확인 ${untilTime(meta.track.next_at) || "-"}</span>`);
     return out.join("");
   }
@@ -458,7 +489,7 @@ function resultStateHtml(i) {
 function resultCardHtml(i) {
   const p = productById(i.product);
   const yt = i.platform === "youtube";
-  const pf = { kin: ["kin", "N"], youtube: ["yt", "▶"], threads: ["th", "@"] }[i.platform];
+  const pf = { kin: ["kin", "N"], youtube: ["yt", "▶"], threads: ["th", "@"], cafe: ["cf", "C"] }[i.platform];
   const by = meta.auth && i.status_by ? ` · ${esc(personName(i.status_by))}` : "";
   const exp = i.exposure ? `<span class="badge hot" title="[상위노출 글] 검색어 중 가장 높은 순위">검색 '${esc(i.exposure.keyword)}' ${i.exposure.rank}위</span>` : "";
   const noText = i.check?.state === "no_text" || (!i.check && !(i.draft || "").trim() && i.platform !== "threads");
@@ -703,7 +734,7 @@ function socialCardHtml(q) {
     q.comments != null ? `<span class="badge ${q.comments < 5 ? "zero" : ""}" title="댓글 수">댓글 ${compactNum(q.comments)}</span>` : "",
     q.likes != null ? `<span title="좋아요">♥ ${compactNum(q.likes)}</span>` : "",
   ].join("") : "";
-  const author = q.author ? (q.author_url ? `<a href="${esc(q.author_url)}" target="_blank" rel="noopener">${yt ? "" : "@"}${esc(q.author)}</a>` : esc(q.author)) : "";
+  const author = q.author ? (q.author_url ? `<a href="${esc(q.author_url)}" target="_blank" rel="noopener">${q.platform === "threads" ? "@" : q.platform === "cafe" ? "☕ " : ""}${esc(q.author)}</a>` : esc(q.author)) : "";
   return `
   <article class="card social ${yt ? "yt" : "th"} ${low ? "low" : ""} ${q.status === "opened" ? "opened" : ""}" data-kind="social" data-id="${esc(q.post_id)}" ${cardData(q)} style="${color ? `--c:${esc(color)}` : ""}">
     ${yt && q.thumbnail ? `<a class="thumb" href="${esc(q.url)}" target="_blank" rel="noopener" data-open><img src="${esc(q.thumbnail)}" alt="" loading="lazy">${q.duration ? `<span class="dur">${durationText(q.duration)}</span>` : ""}</a>` : ""}
@@ -1056,6 +1087,13 @@ $("#collect-btn").addEventListener("click", async () => {
 
 $("#social-collect-btn").addEventListener("click", async () => {
   try {
+    if (state.view === "cafe") {
+      const r = await api("/api/cafe/collect", {});
+      toast(r.started ? (meta.running ? "지금 작업이 끝나면 이어서 찾습니다" : "네이버 카페에서 찾기 시작했습니다") : "이미 찾는 중입니다");
+      wasRunning = true;
+      setTimeout(loadMeta, 800);
+      return;
+    }
     const r = await api("/api/social/collect", {});
     toast(r.started ? (meta.running ? "지금 작업이 끝나면 이어서 찾습니다" : "유튜브·쓰레드에서 찾기 시작했습니다") : "이미 찾는 중입니다");
     wasRunning = true;
@@ -1140,7 +1178,7 @@ function bindFilter(sel, key, isCheck) {
   bindFilter("#r-by", "rBy");
   bindFilter("#s-low", "sLow", true);
   bindFilter("#s-q", "sQ");
-  if (!["feed", "exposure", "youtube", "threads", "results"].includes(state.view)) state.view = "feed";
+  if (!["feed", "exposure", "youtube", "threads", "cafe", "results"].includes(state.view)) state.view = "feed";
   if (!["feed", "exposure"].includes(state.kinView)) state.kinView = "feed";
   renderViews();
   try {
