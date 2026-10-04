@@ -17,11 +17,11 @@ from typing import Callable
 
 import requests
 
-from .config import AppConfig, threads_token, youtube_key
+from .config import AppConfig, naver_credentials, threads_token, youtube_key
 from .matcher import Matcher
 from .storage import Store, iso, now_kst
 
-PLATFORMS = {"youtube": "유튜브", "threads": "쓰레드"}
+PLATFORMS = {"youtube": "유튜브", "threads": "쓰레드", "cafe": "네이버 카페"}
 
 YT_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 YT_COMMENTS_URL = "https://www.googleapis.com/youtube/v3/commentThreads"
@@ -51,8 +51,8 @@ class SocialError(Exception):
 
 @dataclass
 class SocialPost:
-    platform: str               # youtube / threads
-    post_id: str                # yt:<영상 id> / th:<글 id>
+    platform: str               # youtube / threads / cafe
+    post_id: str                # yt:<영상 id> / th:<글 id> / cafe:<카페>/<글 번호>
     url: str
     title: str = ""
     body: str = ""
@@ -344,13 +344,13 @@ def social_matcher(cfg: AppConfig) -> Matcher:
     """지식iN 분류 규칙 + 제품별 social.keywords(브랜드명 등)도 제품 키워드로 친다."""
     products = []
     for p in cfg.products:
-        extra = [k for k in p.social_queries() if k not in p.keywords]
+        extra = [k for k in p.social_queries() + p.cafe_queries() if k not in p.keywords]
         products.append(replace(p, keywords=list(p.keywords) + extra))
     return Matcher(products)
 
 
 def social_status() -> dict[str, bool]:
-    return {"youtube": youtube_key() is not None, "threads": threads_token() is not None}
+    return {"youtube": youtube_key() is not None, "threads": threads_token() is not None, "cafe": naver_credentials() is not None}
 
 
 def make_clients(cfg: AppConfig, store: Store) -> dict[str, object]:

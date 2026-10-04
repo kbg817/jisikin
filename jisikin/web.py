@@ -28,12 +28,13 @@ from .keywords import SOURCE_LABELS, due_products, ensure_default_seeds, generat
 from .matcher import Matcher
 from .migrations import migrate_config
 from .searchad import compact
+from .cafe import collect_cafe
 from .social import PLATFORMS, YouTubeBudget, collect_social, social_matcher, social_status
 from .tracker import check_answers
 from .storage import STATUSES, TODO_STATUSES, ApiBudget, Store, from_iso, iso, now_kst
 
 API_DAILY_LIMIT = 25000
-EXAMPLE_CHANNELS = {"kin": "지식iN 답변", "youtube": "유튜브 댓글"}  # AI 초안 예시는 채널별로 따로
+EXAMPLE_CHANNELS = {"kin": "지식iN 답변", "youtube": "유튜브 댓글", "cafe": "카페 댓글"}  # AI 초안 예시는 채널별로 따로
 KRW_PER_USD = 1400  # 화면에 원화로 대략 보여줄 때만 쓰는 환율
 
 
@@ -52,12 +53,14 @@ class AppState:
         self.next_run_at: datetime | None = None
         self.next_exposure_at: datetime | None = None
         self.next_social_at: datetime | None = None
+        self.next_cafe_at: datetime | None = None
         self.next_track_at: datetime | None = None
         self._run_lock = threading.Lock()
         self._wake = threading.Event()
         self._force = False
         self._force_exposure = False
         self._force_social = False
+        self._force_cafe = False
         self._force_track = False
         self._pending_keywords: list[str] = []
         self._stop = threading.Event()
@@ -144,7 +147,15 @@ class AppState:
 
     def social_interval_hours(self) -> int:
         h = self.cfg.settings.social_interval_hours
-        return h if h > 0 and any(social_status().values()) else 0
+        st = social_status()
+        return h if h > 0 and (st["youtube"] or st["threads"]) else 0
+
+    def run_cafe(self):
+        return self._run("cafe", "카페 글 수집", lambda: collect_cafe(self.cfg, self.store, log=self.log))
+
+    def cafe_interval_minutes(self) -> int:
+        m = self.cfg.settings.cafe_interval_minutes
+        return m if m > 0 and social_status()["cafe"] and self.cfg.cafe_queries() else 0
 
     def exposure_targets(self):
         return all_targets(self.cfg, self.store)
@@ -167,6 +178,8 @@ class AppState:
                 self._force_exposure = True
             elif kind == "social":
                 self._force_social = True
+            elif kind == "cafe":
+                self._force_cafe = True
             elif kind == "track":
                 self._force_track = True
             else:
@@ -178,7 +191,7 @@ class AppState:
         if kind == "keywords":
             target, args = self.run_keywords, (product,)
         else:
-            runners = {"exposure": self.run_exposure, "social": self.run_social, "track": self.run_track}
+            runners = {"exposure": self.run_exposure, "social": self.run_social, "track": self.run_track, "cafe": self.run_cafe}
             target, args = runners.get(kind, self.run_collection), ()
         threading.Thread(target=target, args=args, daemon=True).start()
         return True
@@ -198,7 +211,7 @@ class AppState:
             except Exception:
                 self.log("스케줄러 오류:\n" + traceback.format_exc())
             wait = 60.0
-            for t in (self.next_run_at, self.next_exposure_at, self.next_social_at, self.next_track_at):
+            for t in (self.next_run_at, self.next_exposure_at, self.next_social_at, self.next_track_at, self.next_cafe_at):
                 if t:
                     wait = min(wait, (t - now_kst()).total_seconds())
             self._wake.wait(timeout=max(1.0, wait))
@@ -258,7 +271,23 @@ class AppState:
         elif self.next_social_at > now + timedelta(hours=hours):
             self.next_social_at = now + timedelta(hours=hours)
 
-        # 5) 작업 결과 (매일 한 번)
+        # 5) 네이버 카페 글
+        minutes = self.cafe_interval_minutes()
+        now = now_kst()
+        if minutes > 0 and self.next_cafe_at is None:
+            runs = self.store.recent_runs(1, mode="cafe")  # 재시작해도 주기를 이어서
+            last = from_iso(runs[0]["started_at"]) if runs else None
+            self.next_cafe_at = last + timedelta(minutes=minutes) if last else now
+        if self._force_cafe or (minutes > 0 and now >= self.next_cafe_at):
+            self._force_cafe = False
+            self.run_cafe()
+            self.next_cafe_at = now_kst() + timedelta(minutes=minutes) if minutes > 0 else None
+        elif minutes <= 0:
+            self.next_cafe_at = None
+        elif self.next_cafe_at > now + timedelta(minutes=minutes):
+            self.next_cafe_at = now + timedelta(minutes=minutes)
+
+        # 6) 작업 결과 (매일 한 번)
         self.next_track_at = self.next_track_time()
         if self._force_track or (self.next_track_at and now_kst() >= self.next_track_at):
             self._force_track = False
@@ -370,7 +399,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             abort(404)
         cfg = state.cfg
         kin = state.store.todo_counts(cfg.settings.max_age_days)["products"]
-        social = state.store.social_counts({pf: cfg.settings.social_age_days(pf) for pf in ("youtube", "threads")})
+        social = state.store.social_counts({pf: cfg.settings.social_age_days(pf) for pf in ("youtube", "threads", "cafe")})
         stats = state.store.answer_stats()
         names = people()
         total = lambda d: sum(p["total"] for p in d.values())  # noqa: E731
@@ -381,6 +410,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                 {"label": "아직 안 연 질문", "value": sum(p["new"] for p in kin.values())},
                 {"label": "유튜브 댓글 거리", "value": total(social.get("youtube", {}))},
                 {"label": "쓰레드 댓글 거리", "value": total(social.get("threads", {}))},
+                {"label": "카페 댓글 거리", "value": total(social.get("cafe", {}))},
                 {"label": "오늘 답변·댓글 완료", "value": sum(s["today"] for s in stats.values())},
             ],
             staff=[
@@ -475,9 +505,10 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     def api_meta():
         cfg = state.cfg
         ok, reason = ai_status()
-        runs = state.store.recent_runs(1, exclude_mode=("exposure", "social"))
+        runs = state.store.recent_runs(1, exclude_mode=("exposure", "social", "track", "cafe"))
         social_runs = state.store.recent_runs(1, mode="social")
         exp_runs = state.store.recent_runs(1, mode="exposure")
+        cafe_runs = state.store.recent_runs(1, mode="cafe")
         track_runs = state.store.recent_runs(1, mode="track")
         names = people()
         stats = state.store.answer_stats()
@@ -512,11 +543,18 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             },
             social={
                 "platforms": social_status(),
-                "counts": state.store.social_counts({pf: cfg.settings.social_age_days(pf) for pf in ("youtube", "threads")}),
+                "counts": state.store.social_counts({pf: cfg.settings.social_age_days(pf) for pf in ("youtube", "threads", "cafe")}),
                 "interval_hours": state.social_interval_hours(),
                 "next_at": iso(state.next_social_at),
                 "last_run": social_runs[0] if social_runs else None,
                 "queries": len(cfg.social_queries()),
+            },
+            cafe={
+                "enabled": social_status()["cafe"],
+                "queries": len(cfg.cafe_queries()),
+                "interval_minutes": state.cafe_interval_minutes(),
+                "next_at": iso(state.next_cafe_at),
+                "last_run": cafe_runs[0] if cafe_runs else None,
             },
         )
 
@@ -761,9 +799,19 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     @app.post("/api/social/collect")
     def api_social_collect():
         require_api_header()
-        if not any(social_status().values()):
+        st = social_status()
+        if not (st["youtube"] or st["threads"]):
             return jsonify(error="유튜브 API 키나 쓰레드 토큰이 없습니다. [설정] > API 키에 넣어 주세요"), 400
         return jsonify(started=state.trigger("social"))
+
+    @app.post("/api/cafe/collect")
+    def api_cafe_collect():
+        require_api_header()
+        if not social_status()["cafe"]:
+            return jsonify(error="네이버 API 키가 없습니다. [설정] > API 키에 넣어 주세요"), 400
+        if not state.cfg.cafe_queries():
+            return jsonify(error="카페 검색어가 없습니다. [설정]에서 제품의 cafe: keywords 를 넣어 주세요"), 400
+        return jsonify(started=state.trigger("cafe"))
 
     # ------------------------------------------------------------ 검색어 관리 (메인 키워드 → 세부 검색어)
 

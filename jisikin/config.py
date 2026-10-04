@@ -88,12 +88,16 @@ class Product:
     answer_guide: str = ""
     exposure: Exposure = field(default_factory=Exposure)
     social: Social = field(default_factory=Social)
+    cafe: Social = field(default_factory=Social)  # 네이버 카페 글 검색어 (비워두면 카페는 찾지 않음)
     # AI 초안이 명연당 계산을 쓸 항목: saju(사주) / name(이름 판정) / hanja(한자 찾기)
     calc_tools: list[str] = field(default_factory=list)
     max_bytes: int = 0  # 지식iN 답변 최대 길이(byte, 한글 1자=2byte). 0 이면 제한 없음
 
     def social_queries(self) -> list[str]:
         return _dedupe(self.social.keywords or [self.name])
+
+    def cafe_queries(self) -> list[str]:
+        return _dedupe(self.cafe.keywords)
 
     def search_queries(self) -> list[str]:
         queries = list(self.keywords)
@@ -129,6 +133,9 @@ class Settings:
     youtube_results: int = 25            # 검색어당 영상 수 (최대 50)
     youtube_daily_units: int = 9000      # 유튜브 API 하루 사용량 상한 (무료 10,000). 검색 1번 ≈ 101
     threads_results: int = 50            # 검색어당 쓰레드 글 수 (최대 100)
+    # 네이버 카페 글 (지식iN 과 같은 네이버 API 키 사용)
+    cafe_interval_minutes: int = 30      # 몇 분마다 찾을지. 0 이면 끔
+    cafe_results: int = 50               # 검색어당 글 수 (최대 100)
     # 작업 결과
     track_check_hour: int = 6            # 매일 이 시각(한국 시간)에 내 답변·댓글이 보이는지 확인. -1 이면 끔
 
@@ -161,6 +168,10 @@ class AppConfig:
 
     def exposure_targets(self) -> list[tuple[Product, str]]:
         return [(p, q) for p in self.products for q in p.exposure.queries()]
+
+    def cafe_queries(self) -> list[tuple["Product", str]]:
+        """네이버 카페에서 검색할 (제품, 검색어)."""
+        return [(p, q) for p in self.products for q in p.cafe_queries()]
 
     def social_queries(self) -> list[str]:
         """유튜브·쓰레드에서 검색할 말 (모든 제품, 중복 제거)."""
@@ -257,6 +268,8 @@ def parse_config(text: str) -> AppConfig:
     settings.youtube_results = max(1, min(settings.youtube_results, 50))
     settings.youtube_daily_units = max(0, settings.youtube_daily_units)
     settings.threads_results = max(1, min(settings.threads_results, 100))
+    settings.cafe_interval_minutes = max(0, settings.cafe_interval_minutes)
+    settings.cafe_results = max(1, min(settings.cafe_results, 100))
     if not -1 <= settings.track_check_hour <= 23:
         raise ConfigError("settings.track_check_hour 는 0~23 (끄려면 -1) 이어야 합니다.")
     raw_sources = (data.get("settings") or {}).get("exposure_sources")
@@ -339,6 +352,10 @@ def parse_config(text: str) -> AppConfig:
         if not isinstance(rs, dict):
             raise ConfigError(f"{where}.social 은 keywords 항목을 가져야 합니다. 예) social: {{keywords: [신의소리]}}")
         social = Social(keywords=_str_list(rs.get("keywords"), f"{where}.social.keywords"))
+        rc = rp.get("cafe") or {}
+        if not isinstance(rc, dict):
+            raise ConfigError(f"{where}.cafe 는 keywords 항목을 가져야 합니다. 예) cafe: {{keywords: [작명소 추천]}}")
+        cafe = Social(keywords=_str_list(rc.get("keywords"), f"{where}.cafe.keywords"))
 
         products.append(
             Product(
@@ -357,6 +374,7 @@ def parse_config(text: str) -> AppConfig:
                 calc_tools=list(dict.fromkeys(calc_tools)),
                 max_bytes=max_bytes,
                 social=social,
+                cafe=cafe,
             )
         )
     return AppConfig(settings=settings, ai=ai, products=products)

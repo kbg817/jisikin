@@ -228,6 +228,7 @@ textarea.config {
 .view[data-group="kin"] { --pc: #03c75a; }
 .view[data-group="youtube"] { --pc: #ff0033; }
 .view[data-group="threads"] { --pc: var(--text); }
+.view[data-group="cafe"] { --pc: #16a34a; }
 .view[data-group="results"] { --pc: #2563eb; margin-left: auto; }
 .view .cnt.warn:not(:empty), .view.active .cnt.warn:not(:empty) { background: #fee2e2; color: #991b1b; }
 .pf {
@@ -249,7 +250,7 @@ textarea.config {
 .badge.views { font-weight: 700; }
 
 /* 작업 결과 */
-.pf.kin { --pc: #03c75a; } .pf.yt { --pc: #ff0033; } .pf.th { --pc: var(--text); } .pf.rs { --pc: #2563eb; }
+.pf.kin { --pc: #03c75a; } .pf.yt { --pc: #ff0033; } .pf.th { --pc: var(--text); } .pf.cf { --pc: #16a34a; } .pf.rs { --pc: #2563eb; }
 .pf.mini { width: 16px; height: 16px; font-size: 9px; border-radius: 4px; opacity: 1; margin-right: 6px; vertical-align: 1px; }
 .result-state { margin: 6px 0 4px; }
 .rs-badge { border-radius: 999px; padding: 1px 10px; font-weight: 700; font-size: 13px; }

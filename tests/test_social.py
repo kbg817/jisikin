@@ -234,7 +234,7 @@ def test_social_api_status_counts_as_answer(web):
     assert client.get("/api/social?platform=tiktok").status_code == 400
     meta = client.get("/api/meta").get_json()
     assert meta["social"]["counts"]["youtube"]["daksaren"]["total"] == 1
-    assert meta["social"]["platforms"] == {"youtube": False, "threads": False}
+    assert meta["social"]["platforms"] == {"youtube": False, "threads": False, "cafe": False}
     assert client.post("/api/social/yt:1/status", json={"status": "answered"}).status_code == 403
     r = client.post("/api/social/yt:1/status", json={"status": "answered", "draft": "좋은 영상 감사합니다"}, headers=H)
     assert r.get_json() == {"ok": True}

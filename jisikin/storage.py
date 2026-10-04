@@ -592,11 +592,12 @@ class Store:
             ).lastrowid
 
     def capture_final_comment(self, post_id: str, product: str, by: str = "") -> int | None:
-        """댓글완료한 유튜브 영상의 댓글(최종본)을 [유튜브 댓글] 예시 후보로 남긴다."""
+        """댓글완료한 유튜브 영상·카페 글의 댓글(최종본)을 [유튜브 댓글]·[카페 댓글] 예시 후보로 남긴다."""
         post = self.get_social(post_id)
         comment = ((post or {}).get("draft") or "").strip()
-        if not post or not comment or post.get("platform") != "youtube":
+        if not post or not comment or post.get("platform") not in ("youtube", "cafe"):
             return None
+        channel = post["platform"]
         desc = (post.get("body") or "")[:1000]
         now_s = iso(now_kst())
         with self._conn() as c:
@@ -609,8 +610,8 @@ class Store:
                 return row["id"]
             return c.execute(
                 """INSERT INTO answer_examples (product, channel, doc_id, title, question, answer, source, edited, created_by, created_at)
-                   VALUES (?,'youtube',?,?,?,?,'final',?,?,?)""",
-                (product, post_id, post.get("title") or "", desc, comment, post.get("draft_edited") or 0, by, now_s),
+                   VALUES (?,?,?,?,?,?,'final',?,?,?)""",
+                (product, channel, post_id, post.get("title") or "", desc, comment, post.get("draft_edited") or 0, by, now_s),
             ).lastrowid
 
     def drop_final_answer(self, doc_id: str) -> None:

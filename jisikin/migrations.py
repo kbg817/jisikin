@@ -264,6 +264,28 @@ def _max_bytes(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+_CAFE_BLOCK = '    cafe:\n      # [카페] 탭: 네이버 카페에 올라온 작명·개명 글 (지식iN 과 같은 네이버 API 키 사용)\n      keywords: [작명소 추천, 아기 작명, 신생아 작명, 작명 문의, 이름 짓기, 개명 후기, 개명 신청, 개명 작명소, 사주 작명]\n'
+
+
+def _cafe(text: str, example_text: str) -> str | None:
+    """명운연구소에 네이버 카페 검색어(cafe:) 추가 — social: 바로 뒤에, 이미 있으면 그대로."""
+    parts = split_products(text)
+    if parts is None:
+        return None
+    head, blocks, tail = parts
+    out = []
+    for pid, block in blocks:
+        if pid == "myeongun" and not re.search(r"^    cafe:", block, re.M):
+            m = _SOCIAL_RE.search(block)
+            if m:
+                block = block[: m.end()] + _CAFE_BLOCK + block[m.end() :]
+            else:
+                block = block.rstrip("\n") + "\n" + _CAFE_BLOCK
+        out.append((pid, block))
+    new = join_products(head, out, tail)
+    return None if new == text else new
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -279,6 +301,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-no-disclosure", "AI 초안에서 운영자 소개 문장·링크 빼기", _no_disclosure),
     ("2026-10-exposure-views", "상위노출에 지식iN 조회수순 추가, 지역 확대, 경쟁사 사주나루 검색어", _exposure_views),
     ("2026-10-max-bytes", "신의소리·명연당·명운연구소 지식iN 답변 500byte 이하", _max_bytes),
+    ("2026-10-cafe", "명운연구소 네이버 카페 글 검색어 추가", _cafe),
     ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
 ]
 
