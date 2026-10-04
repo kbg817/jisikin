@@ -244,6 +244,26 @@ def _calc_tools(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+_MAX_BYTES_LINE = "    max_bytes: 500            # 지식iN 답변 최대 길이 (한글 1자=2byte → 약 240자)\n"
+
+
+def _max_bytes(text: str, example_text: str) -> str | None:
+    """신의소리·명연당·명운연구소 지식iN 답변을 500byte 이하로 (max_bytes 가 없을 때만 min_score 다음 줄에)."""
+    parts = split_products(text)
+    if parts is None:
+        return None
+    head, blocks, tail = parts
+    out = []
+    for pid, block in blocks:
+        if pid in ("sinui", "myeongyeon", "myeongun") and not re.search(r"^    max_bytes:", block, re.M):
+            m = re.search(r"^    min_score:.*\n", block, re.M) or re.search(r"^    name:.*\n", block, re.M)
+            if m:
+                block = block[: m.end()] + _MAX_BYTES_LINE + block[m.end() :]
+        out.append((pid, block))
+    new = join_products(head, out, tail)
+    return None if new == text else new
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -258,6 +278,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-safemom", "세이프맘 탄소매트 추가", _safemom),
     ("2026-10-no-disclosure", "AI 초안에서 운영자 소개 문장·링크 빼기", _no_disclosure),
     ("2026-10-exposure-views", "상위노출에 지식iN 조회수순 추가, 지역 확대, 경쟁사 사주나루 검색어", _exposure_views),
+    ("2026-10-max-bytes", "신의소리·명연당·명운연구소 지식iN 답변 500byte 이하", _max_bytes),
     ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
 ]
 

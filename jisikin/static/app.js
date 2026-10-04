@@ -615,8 +615,22 @@ function markOpened(card) {
   refreshActions(card);
 }
 
+// 지식iN 글자 수 세는 방식: 한글 등 2byte, 영문·숫자·공백 1byte, 줄바꿈 2byte
+function answerBytes(text) {
+  let n = 0;
+  for (const c of (text || "").trim()) n += (c.charCodeAt(0) > 127 || c === "\n") ? 2 : 1;
+  return n;
+}
+
+function bytesHtml(text, limit) {
+  if (!limit) return "";
+  const n = answerBytes(text);
+  return `<span class="bytes ${n > limit ? "over" : ""}" title="한글 1자 2byte, 영문·숫자·공백 1byte">${num(n)} / ${num(limit)} byte${n > limit ? " · 너무 길어요" : ""}</span>`;
+}
+
 function draftBoxHtml(q, social) {
   const what = social ? (q.platform === "youtube" ? "영상" : "글") : "질문";
+  const limit = social ? 0 : (productById(q.product)?.max_bytes || 0);
   return `
       <div class="draft" hidden>
         <textarea spellcheck="false">${esc(q.draft || "")}</textarea>
@@ -624,6 +638,7 @@ function draftBoxHtml(q, social) {
           <button class="btn primary" data-act="copy-open">📋 복사하고 ${what} 열기</button>
           <button class="btn" data-act="copy">복사만</button>
           <button class="btn quiet" data-act="regen">다시 쓰기</button>
+          ${limit ? `<span class="bytes-box" data-limit="${limit}">${bytesHtml(q.draft, limit)}</span>` : ""}
         </div>
         <p class="steps"><span>① 내용 확인·수정</span><span>② 복사하고 ${what} 열어 붙여넣고 등록</span><span>③ 돌아와서 <b>✓ ${social ? "댓글" : "답변"} 달았어요</b></span></p>
       </div>`;
@@ -893,6 +908,7 @@ async function draft(card, btn, regen) {
     const data = await api(itemPath(card, "/draft"), {});
     ta.value = data.draft;
     box.hidden = false;
+    refreshBytes(card);
     ok = true;
   } catch (e) {
     toast(e.message);
@@ -919,9 +935,17 @@ function saveDraftSoon(card, delay = 1500) {
   }, delay);
 }
 
+function refreshBytes(card) {
+  const box = card.querySelector(".bytes-box");
+  if (box) box.innerHTML = bytesHtml(card.querySelector(".draft textarea").value, Number(box.dataset.limit));
+}
+
 document.addEventListener("input", (ev) => {
   const ta = ev.target.closest(".draft textarea");
-  if (ta) saveDraftSoon(ta.closest(".card"));
+  if (ta) {
+    saveDraftSoon(ta.closest(".card"));
+    refreshBytes(ta.closest(".card"));
+  }
 });
 
 async function copyText(text) {

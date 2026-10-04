@@ -350,6 +350,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             {
                 "id": p.id, "name": p.name, "color": p.color, "url": p.url,
                 "categories": [c.name for c in p.categories], "social_queries": p.social_queries(),
+                "max_bytes": p.max_bytes,
             }
             for p in cfg.products
         ]

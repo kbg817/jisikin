@@ -90,6 +90,7 @@ class Product:
     social: Social = field(default_factory=Social)
     # AI 초안이 명연당 계산을 쓸 항목: saju(사주) / name(이름 판정) / hanja(한자 찾기)
     calc_tools: list[str] = field(default_factory=list)
+    max_bytes: int = 0  # 지식iN 답변 최대 길이(byte, 한글 1자=2byte). 0 이면 제한 없음
 
     def social_queries(self) -> list[str]:
         return _dedupe(self.social.keywords or [self.name])
@@ -326,6 +327,10 @@ def parse_config(text: str) -> AppConfig:
         )
         if exposure.regions and not exposure.region_terms:
             raise ConfigError(f"{where}.exposure 에 regions 를 넣었다면 region_terms (예: [건선, 건선 피부과]) 도 넣어 주세요.")
+        try:
+            max_bytes = max(0, int(rp.get("max_bytes") or 0))
+        except (TypeError, ValueError) as e:
+            raise ConfigError(f"{where}.max_bytes 는 숫자여야 합니다. (예: 500)") from e
         calc_tools = _str_list(rp.get("calc_tools"), f"{where}.calc_tools")
         bad = [t for t in calc_tools if t not in CALC_TOOL_KEYS]
         if bad:
@@ -350,6 +355,7 @@ def parse_config(text: str) -> AppConfig:
                 answer_guide=str(rp.get("answer_guide") or "").strip(),
                 exposure=exposure,
                 calc_tools=list(dict.fromkeys(calc_tools)),
+                max_bytes=max_bytes,
                 social=social,
             )
         )

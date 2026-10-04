@@ -129,3 +129,31 @@ def test_draft_uses_starred_examples_and_records_usage(example_cfg, monkeypatch)
     # 예시가 없으면 예시 문단도 없음
     system_plain, user_plain = build_prompt(example_cfg, example_cfg.product("eumpa"), QUESTION, [])
     assert "실제 답변 예시" not in system_plain and "실제 답변 예시" not in user_plain
+
+
+def test_answer_bytes_and_length_rule(example_cfg):
+    from jisikin.drafter import answer_bytes
+
+    assert answer_bytes("가나 ab") == 7 and answer_bytes("가\n나") == 6
+    sinui = example_cfg.product("sinui")
+    assert sinui.max_bytes == 500 and example_cfg.product("daksaren").max_bytes == 0
+    system, user = build_prompt(example_cfg, sinui, QUESTION)
+    assert "500byte 이하" in system and "500byte" in user
+    assert "500byte" not in build_prompt(example_cfg, example_cfg.product("daksaren"), QUESTION)[0]
+
+
+def test_long_draft_is_shortened(example_cfg, monkeypatch):
+    from jisikin import drafter
+
+    calls = []
+
+    def fake_ask(cfg, system, user, effort=None, store=None, kind="draft", tools=None):
+        calls.append(system)
+        return "가" * 400 if len(calls) == 1 else "짧게 줄인 답변입니다."
+
+    monkeypatch.setattr(drafter, "ask_claude", fake_ask)
+    out = drafter.generate_draft(example_cfg, example_cfg.product("sinui"), QUESTION)
+    assert out == "짧게 줄인 답변입니다." and len(calls) == 2 and "편집자" in calls[1]
+    calls.clear()
+    drafter.generate_draft(example_cfg, example_cfg.product("daksaren"), QUESTION)  # 제한 없는 제품은 그대로
+    assert len(calls) == 1
