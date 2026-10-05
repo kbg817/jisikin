@@ -718,7 +718,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             product = cfg.product(post["matches"][0].get("product_id"))
         return product
 
-    @app.post("/api/social/<post_id>/status")
+    @app.post("/api/social/<path:post_id>/status")
     def api_social_status(post_id: str):
         require_api_header()
         data = request.get_json(silent=True) or {}
@@ -740,7 +740,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             state.store.drop_final_answer(post_id)
         return jsonify(ok=True)
 
-    @app.post("/api/social/<post_id>/draft")
+    @app.post("/api/social/<path:post_id>/draft")
     def api_social_draft(post_id: str):
         require_api_header()
         post = state.store.get_social(post_id)
@@ -756,7 +756,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         state.store.set_social_draft(post_id, draft)
         return jsonify(draft=draft)
 
-    @app.post("/api/social/<post_id>/draft/save")
+    @app.post("/api/social/<path:post_id>/draft/save")
     def api_social_draft_save(post_id: str):
         require_api_header()
         text = (request.get_json(silent=True) or {}).get("draft")

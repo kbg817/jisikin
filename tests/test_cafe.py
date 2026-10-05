@@ -119,3 +119,22 @@ def test_collect_cafe_auth_error_explains_how_to_enable(tmp_path, example_cfg):
     err = NaverError("NAVER API HUB 401 요청한 API는 이 Application에서 활성화되어 있지 않습니다.", fatal=True, auth=True)
     s = collect_cafe(example_cfg, store, FakeClient(error=err), log=lambda m: None)
     assert "카페글" in s.errors[0]
+
+
+def test_cafe_post_with_slash_in_id_routes(tmp_path):
+    """카페 글 번호엔 '/' 가 들어 있음 (cafe:카페/글번호) — 초안·상태 주소가 404 가 나면 안 됨."""
+    from urllib.parse import quote
+
+    cfg_path = tmp_path / "config.yaml"
+    shutil.copyfile(EXAMPLE_CONFIG_PATH, cfg_path)
+    state = AppState(cfg_path, tmp_path / "db.sqlite", env_path=tmp_path / ".env")
+    client = create_app(state).test_client()
+    state.store.upsert_social(to_post(ITEM), "작명")
+    pid = quote("cafe:sajupuli/12345", safe="")
+    r = client.post(f"/api/social/{pid}/draft", json={}, headers=H)
+    assert r.status_code == 400 and "error" in r.get_json()  # AI 키가 없을 뿐, 글은 찾음
+    r = client.post(f"/api/social/{pid}/draft/save", json={"draft": "좋은 이름 지으세요"}, headers=H)
+    assert r.status_code == 200
+    r = client.post(f"/api/social/{pid}/status", json={"status": "answered", "draft": "좋은 이름 지으세요"}, headers=H)
+    assert r.get_json() == {"ok": True}
+    assert state.store.get_social("cafe:sajupuli/12345")["status"] == "answered"
