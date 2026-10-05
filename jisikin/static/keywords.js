@@ -4,6 +4,7 @@ const $ = (sel) => document.querySelector(sel);
 let data = null;
 let current = "";
 let pollTimer = null;
+let removedOpen = false;  // [직접 뺀 검색어] 칸을 펼쳐 둔 상태 (다시 그려도 유지)
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -71,7 +72,10 @@ function render() {
   const enabled = p.auto.filter((k) => k.enabled).length;
   const hasVolume = p.auto.some((k) => k.pc != null || k.mobile != null);
 
-  const rows = p.auto.map((k) => {
+  // 직접 끈 검색어(고정 + 꺼짐)는 표에서 빼서 맨 아래 접힌 칸으로
+  const removed = p.auto.filter((k) => k.user_set && !k.enabled);
+  const shown = p.auto.filter((k) => !(k.user_set && !k.enabled));
+  const row = (k) => {
     const vol = (k.pc != null || k.mobile != null)
       ? `<b>${num((k.pc || 0) + (k.mobile || 0))}</b> <span class="muted">(PC ${num(k.pc || 0)} · 모바일 ${num(k.mobile || 0)})</span>`
       : `<span class="muted">-</span>`;
@@ -84,7 +88,9 @@ function render() {
       <td>${k.sources.map((x) => `<span class="badge">${esc(x)}</span>`).join(" ")}</td>
       <td>${exp}</td>
     </tr>`;
-  }).join("");
+  };
+  const rows = shown.map(row).join("");
+  const head = "<tr><th>사용</th><th>검색어</th><th>월간 검색수</th><th>출처</th><th>지식iN 노출</th></tr>";
 
   $("#kw-body").innerHTML = `
     <div class="panel kw-form">
@@ -110,19 +116,25 @@ function render() {
 
     <div class="panel">
       <div class="kw-head2">
-        <h2>자동 생성된 검색어 <span class="muted">켜짐 ${enabled} / 전체 ${p.auto.length}</span></h2>
+        <h2>자동 생성된 검색어 <span class="muted">켜짐 ${enabled} / 전체 ${shown.length}</span></h2>
         <span class="kw-add">
           <input id="kw-add" placeholder="검색어 직접 추가">
           <button class="btn small" id="kw-add-btn">추가</button>
         </span>
       </div>
       ${p.auto.length ? `
-      <p class="muted" style="font-size:13px;margin:0 0 8px">${hasVolume ? `월간 검색수가 많은 순입니다. 월 ${num(p.min_volume)}회 미만은 자동으로 꺼 둡니다.` : "월간 검색수 없이 추정 점수 순입니다. <b>[설정]에 검색광고 API 키를 넣으면 실제 검색수로 정렬하고 검색량 낮은 검색어를 자동으로 뺍니다.</b>"} 체크를 끄면 확인에서 빠집니다.</p>
+      <p class="muted" style="font-size:13px;margin:0 0 8px">${hasVolume ? `월간 검색수가 많은 순입니다. 월 ${num(p.min_volume)}회 미만은 자동으로 꺼 둡니다.` : "월간 검색수 없이 추정 점수 순입니다. <b>[설정]에 검색광고 API 키를 넣으면 실제 검색수로 정렬하고 검색량 낮은 검색어를 자동으로 뺍니다.</b>"} 체크를 끄면 확인에서 빠지고 맨 아래 [직접 뺀 검색어]로 옮겨집니다.</p>
       <div class="table-wrap"><table class="runs kw-table">
-        <tr><th>사용</th><th>검색어</th><th>월간 검색수</th><th>출처</th><th>지식iN 노출</th></tr>
+        ${head}
         ${rows}
       </table></div>` : `<div class="empty small">메인 키워드를 넣고 [저장하고 자동 생성]을 누르세요.</div>`}
     </div>
+
+    ${removed.length ? `
+    <details class="panel" id="kw-removed" ${removedOpen ? "open" : ""}>
+      <summary>직접 뺀 검색어 ${removed.length}개 <span class="muted">— 다시 생성해도 켜지지 않아요. 체크하면 다시 위로 올라갑니다</span></summary>
+      <div class="table-wrap"><table class="runs kw-table">${head}${removed.map(row).join("")}</table></div>
+    </details>` : ""}
 
     ${p.config_keywords.length ? `
     <details class="panel">
@@ -169,6 +181,7 @@ document.addEventListener("change", async (ev) => {
     const p = data.products.find((x) => x.id === current);
     const k = p.auto.find((x) => x.keyword === box.dataset.kw);
     if (k) { k.enabled = box.checked; k.user_set = true; }
+    if (!box.checked) toast(`'${box.dataset.kw}' 을(를) 맨 아래 [직접 뺀 검색어]로 옮겼어요`);
     data.total_enabled += box.checked ? 1 : -1;
     render();
   } catch (e) {
@@ -176,6 +189,10 @@ document.addEventListener("change", async (ev) => {
     toast(e.message);
   }
 });
+
+document.addEventListener("toggle", (ev) => {
+  if (ev.target.id === "kw-removed") removedOpen = ev.target.open;
+}, true);
 
 document.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && ev.target.id === "kw-add") $("#kw-add-btn").click();
