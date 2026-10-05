@@ -288,16 +288,18 @@ def test_sinui_kin_guide_v2_replaces_only_old_default():
 def test_sinui_kin_tone_from_any_older_guide():
     from jisikin.migrations import (
         _KIN_GUIDE_V1, _KIN_GUIDE_V2, _SINUI_GUIDE_NEW, _SINUI_GUIDE_OLD,
-        _example_kin_block, _sinui_kin_guide, _sinui_kin_guide_v2, _sinui_kin_guide_v3,
+        _KIN_BLOCK_V3, _example_kin_block, _sinui_kin_guide, _sinui_kin_guide_v2, _sinui_kin_guide_v3,
+        _sinui_kin_guide_v4,
     )
 
     example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
     block = _example_kin_block(example).group(0)
-    for older in ("", _KIN_GUIDE_V1, _KIN_GUIDE_V2):
+    for older in ("", _KIN_GUIDE_V1, _KIN_GUIDE_V2, _KIN_BLOCK_V3):
         text = example.replace(block, older).replace(_SINUI_GUIDE_NEW, _SINUI_GUIDE_OLD)
-        for fn in (_sinui_kin_guide, _sinui_kin_guide_v2, _sinui_kin_guide_v3):
+        for fn in (_sinui_kin_guide, _sinui_kin_guide_v2, _sinui_kin_guide_v3, _sinui_kin_guide_v4):
             text = fn(text, example) or text
         assert text == example
     sinui = parse_config(example).product("sinui")
     assert "서비스 안내문처럼 쓰지 않는다" in sinui.kin_guide and "짚어볼 수" in sinui.kin_banned
     assert "상담받을 수 있다고 안내" not in sinui.answer_guide
+    assert "호칭은 질문자가 쓴 말 그대로" in sinui.kin_guide and "그녀" in sinui.kin_banned

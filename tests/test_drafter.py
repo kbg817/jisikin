@@ -209,7 +209,8 @@ def test_kin_issues_rewrites_service_tone(example_cfg, monkeypatch):
     ]
     for s in bad:
         assert kin_issues(sinui, "먼저 연락은 참고 기다려보세요.\n\n" + s) == [s]
-    ok = "유튜브 설명란을 먼저 볼 수 있어요. 저는 신의소리 쌤한테 봤는데 잘 보세요!"
+    assert kin_issues(sinui, "그녀 속마음은 신의소리 쌤께 한번 물어보세요.") == ["그녀 속마음은 신의소리 쌤께 한번 물어보세요."]
+    ok = "전여친이 먼저 연락해놓고 다시 답이 없으니 헷갈리죠. 그래도 연락 한 번으로 재회하고 싶다는 뜻이라고 보긴 어려워요. 타로 상담은 신의소리 추천요."
     assert kin_issues(sinui, ok) == []
     assert kin_issues(example_cfg.product("myeongyeon"), bad[0]) == []  # 지침 없는 제품은 검사 안 함
 
