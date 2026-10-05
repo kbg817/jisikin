@@ -86,6 +86,7 @@ class Product:
     url: str = ""
     color: str = "#2563eb"
     answer_guide: str = ""
+    kin_guide: str = ""  # 지식iN 답변에만 쓰는 추가 지침 (예시·공통 원칙보다 우선, 유튜브·카페 댓글에는 안 씀)
     exposure: Exposure = field(default_factory=Exposure)
     social: Social = field(default_factory=Social)
     cafe: Social = field(default_factory=Social)  # 네이버 카페 글 검색어 (비워두면 카페는 찾지 않음)
@@ -370,6 +371,7 @@ def parse_config(text: str) -> AppConfig:
                 url=str(rp.get("url") or "").strip(),
                 color=str(rp.get("color") or "#2563eb").strip(),
                 answer_guide=str(rp.get("answer_guide") or "").strip(),
+                kin_guide=str(rp.get("kin_guide") or "").strip(),
                 exposure=exposure,
                 calc_tools=list(dict.fromkeys(calc_tools)),
                 max_bytes=max_bytes,

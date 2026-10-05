@@ -42,6 +42,7 @@ def test_adds_myeongun_and_reorders_keeping_user_edits(tmp_path):
         "신의소리는 신점·타로·연애·재회만, 사주는 새 서비스 명연당으로, 치디핏 추가, 제품 사이트 주소",
         "세이프맘 탄소매트 추가",
         "신의소리·명연당·명운연구소 지식iN 답변 500byte 이하",
+        "신의소리 지식iN 답변 지침 추가",
     ]
     assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit", "safemom"]
     text = path.read_text(encoding="utf-8")
@@ -251,3 +252,16 @@ def test_max_bytes_added_once_to_three_products():
     cfg = parse_config(new)
     assert [p.id for p in cfg.products if p.max_bytes == 500] == ["sinui", "myeongyeon", "myeongun"]
     assert new == example and _max_bytes(new, example) is None
+
+
+def test_sinui_kin_guide_added_once():
+    import re
+
+    from jisikin.migrations import _sinui_kin_guide
+
+    example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    m = re.search(r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?=    \S)", example, re.M)
+    old = example.replace(m.group(0), "")
+    assert not parse_config(old).product("sinui").kin_guide
+    new = _sinui_kin_guide(old, example)
+    assert new == example and _sinui_kin_guide(new, example) is None
