@@ -165,7 +165,7 @@ def test_sinui_kin_guide_and_recent_drafts(example_cfg, monkeypatch):
     from jisikin.storage import Store
 
     sinui = example_cfg.product("sinui")
-    assert "상투적인 추천·후기 문구" in sinui.kin_guide and not example_cfg.product("myeongyeon").kin_guide
+    assert "상투적인 표현을 반복하지 않는다" in sinui.kin_guide and not example_cfg.product("myeongyeon").kin_guide
     store = Store(":memory:")
     with store._conn() as c:
         for i, pid in enumerate(["sinui", "sinui", "myeongyeon"]):
@@ -185,7 +185,7 @@ def test_sinui_kin_guide_and_recent_drafts(example_cfg, monkeypatch):
     monkeypatch.setattr(drafter, "ask_claude", fake_ask)
     drafter.generate_draft(example_cfg, sinui, dict(QUESTION, doc_id="new"), store=store)
     system, user = calls[0]
-    assert "신의소리 지식iN 답변 지침 — 가장 우선" in system and "마지막 문장이 홍보로 끝나는가" in system
+    assert "신의소리 지식iN 답변 지침 — 가장 우선" in system and "추천·경험 공유 문장이 앞의 내용과 연결되지 않고" in system
     assert "최근 답변 내용 0" in user and "최근 답변 내용 1" in user and "최근 답변 내용 2" not in user
     assert "검수 기준으로 스스로 확인" in user
     # 다른 제품, 유튜브·카페 댓글에는 넣지 않음
@@ -193,4 +193,4 @@ def test_sinui_kin_guide_and_recent_drafts(example_cfg, monkeypatch):
     drafter.generate_draft(example_cfg, example_cfg.product("myeongyeon"), dict(QUESTION, doc_id="x"), store=store)
     assert "지식iN 답변 지침" not in calls[0][0] and "최근에 이미 쓴 답변" not in calls[0][1]
     social_system, _ = build_social_prompt(example_cfg, sinui, {"platform": "youtube", "title": "t", "body": "b"})
-    assert "상투적인 추천·후기 문구" not in social_system
+    assert "상투적인 표현을 반복하지 않는다" not in social_system

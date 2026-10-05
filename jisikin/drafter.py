@@ -86,7 +86,7 @@ KIN_GUIDE_TEMPLATE = """
 RECENT_DRAFTS_TEMPLATE = """
 [최근에 이미 쓴 답변 — 따라 하지 말 것]
 아래는 최근 다른 질문에 쓴 답변입니다. 여기 나온 문장, 그리고 단어만 바꿨을 뿐 의미·역할이 같은 문장
-(같은 방식의 추천 문장, 같은 구조의 후기형 문장, 같은 마무리)은 이번 답변에 쓰지 마세요.
+(같은 틀의 추천 문장, 같은 구조의 경험담, 같은 마무리)은 이번 답변에 쓰지 말고, 이번 질문에 맞춰 새로 쓰세요.
 {items}
 """
 RECENT_DRAFTS = 8            # 지식iN 지침(kin_guide)이 있는 제품은 최근 초안 몇 개를 보여주고 반복을 피하게 함
@@ -240,7 +240,7 @@ def fit_length(cfg: AppConfig, product: Product, text: str, store: Store | None 
         target = int(limit * 0.9)  # 다시 넘지 않게 조금 더 짧게 부탁
         system = SHORTEN_SYSTEM
         if product.kin_guide.strip():
-            system += "\n줄인 답변도 아래 지침을 지켜야 합니다. (마지막 문장이 홍보로 끝나지 않게)\n" + product.kin_guide.strip()
+            system += "\n줄인 답변도 아래 지침을 지켜야 합니다. (추천·경험 문장이 앞 내용과 끊기지 않게)\n" + product.kin_guide.strip()
         shorter = ask_claude(
             cfg, system,
             f"아래 답변은 {answer_bytes(text)}byte 입니다. {target}byte(한글 약 {_max_chars(target)}자) 이하로 줄여 주세요.\n"
