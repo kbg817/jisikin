@@ -286,6 +286,26 @@ def _cafe(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+def _sinui_kin_guide(text: str, example_text: str) -> str | None:
+    """신의소리에 지식iN 전용 답변 지침(kin_guide) 추가 — 예시 설정의 글을 answer_guide 바로 앞에, 이미 있으면 그대로."""
+    m = re.search(r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?=    \S)", example_text, re.M)
+    parts = split_products(text)
+    if m is None or parts is None:
+        return None
+    head, blocks, tail = parts
+    out = []
+    for pid, block in blocks:
+        if pid == "sinui" and not re.search(r"^    kin_guide:", block, re.M):
+            g = re.search(r"^    answer_guide:", block, re.M)
+            if g:
+                block = block[: g.start()] + m.group(0) + block[g.start() :]
+            else:
+                block = block.rstrip("\n") + "\n" + m.group(0)
+        out.append((pid, block))
+    new = join_products(head, out, tail)
+    return None if new == text else new
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -302,6 +322,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-exposure-views", "상위노출에 지식iN 조회수순 추가, 지역 확대, 경쟁사 사주나루 검색어", _exposure_views),
     ("2026-10-max-bytes", "신의소리·명연당·명운연구소 지식iN 답변 500byte 이하", _max_bytes),
     ("2026-10-cafe", "명운연구소 네이버 카페 글 검색어 추가", _cafe),
+    ("2026-10-sinui-kin-guide", "신의소리 지식iN 답변 지침 추가", _sinui_kin_guide),
     ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
 ]
 

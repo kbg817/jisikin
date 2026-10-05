@@ -157,3 +157,40 @@ def test_long_draft_is_shortened(example_cfg, monkeypatch):
     calls.clear()
     drafter.generate_draft(example_cfg, example_cfg.product("daksaren"), QUESTION)  # 제한 없는 제품은 그대로
     assert len(calls) == 1
+
+
+def test_sinui_kin_guide_and_recent_drafts(example_cfg, monkeypatch):
+    from jisikin import drafter
+    from jisikin.drafter import build_social_prompt
+    from jisikin.storage import Store
+
+    sinui = example_cfg.product("sinui")
+    assert "상투적인 추천·후기 문구" in sinui.kin_guide and not example_cfg.product("myeongyeon").kin_guide
+    store = Store(":memory:")
+    with store._conn() as c:
+        for i, pid in enumerate(["sinui", "sinui", "myeongyeon"]):
+            c.execute(
+                "INSERT INTO questions (doc_id, url, title, product, first_seen, last_seen, draft, draft_at) "
+                "VALUES (?, '', '', ?, '2026-10-05T00:00:00+09:00', '2026-10-05T00:00:00+09:00', ?, ?)",
+                (f"d{i}", pid, f"최근 답변 내용 {i}", f"2026-10-05T0{i}:00:00+09:00"),
+            )
+    assert store.recent_drafts("sinui", 8, exclude="d1") == ["최근 답변 내용 0"]
+
+    calls = []
+
+    def fake_ask(cfg, system, user, effort=None, store=None, kind="draft", tools=None):
+        calls.append((system, user))
+        return "짧은 답변"
+
+    monkeypatch.setattr(drafter, "ask_claude", fake_ask)
+    drafter.generate_draft(example_cfg, sinui, dict(QUESTION, doc_id="new"), store=store)
+    system, user = calls[0]
+    assert "신의소리 지식iN 답변 지침 — 가장 우선" in system and "마지막 문장이 홍보로 끝나는가" in system
+    assert "최근 답변 내용 0" in user and "최근 답변 내용 1" in user and "최근 답변 내용 2" not in user
+    assert "검수 기준으로 스스로 확인" in user
+    # 다른 제품, 유튜브·카페 댓글에는 넣지 않음
+    calls.clear()
+    drafter.generate_draft(example_cfg, example_cfg.product("myeongyeon"), dict(QUESTION, doc_id="x"), store=store)
+    assert "지식iN 답변 지침" not in calls[0][0] and "최근에 이미 쓴 답변" not in calls[0][1]
+    social_system, _ = build_social_prompt(example_cfg, sinui, {"platform": "youtube", "title": "t", "body": "b"})
+    assert "상투적인 추천·후기 문구" not in social_system

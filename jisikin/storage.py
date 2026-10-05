@@ -554,6 +554,17 @@ class Store:
                 (draft, iso(now_kst()), int(edited), doc_id),
             )
 
+    def recent_drafts(self, product: str, limit: int, exclude: str = "", days: int = 14) -> list[str]:
+        """최근에 쓴 지식iN 답변 초안 (같은 문장 구조를 되풀이하지 않게 AI 에게 보여줌). 새것부터."""
+        since = iso(now_kst() - timedelta(days=days))
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT draft FROM questions WHERE product=? AND doc_id<>? AND draft IS NOT NULL AND draft<>''
+                   AND draft_at>=? ORDER BY draft_at DESC LIMIT ?""",
+                (product, exclude, since, limit),
+            ).fetchall()
+        return [r["draft"] for r in rows]
+
     def save_draft_edit(self, doc_id: str, text: str) -> bool:
         """직원이 초안 칸에서 고친 내용. 내용이 바뀐 경우에만 '고침'으로 표시한다."""
         text = (text or "").strip()
