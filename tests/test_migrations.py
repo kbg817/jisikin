@@ -261,7 +261,9 @@ def test_sinui_kin_guide_added_once():
     from jisikin.migrations import _sinui_kin_guide
 
     example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
-    m = re.search(r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?=    \S)", example, re.M)
+    from jisikin.migrations import _example_kin_block
+
+    m = _example_kin_block(example)
     old = example.replace(m.group(0), "")
     assert not parse_config(old).product("sinui").kin_guide
     new = _sinui_kin_guide(old, example)
@@ -272,10 +274,30 @@ def test_sinui_kin_guide_v2_replaces_only_old_default():
     from jisikin.migrations import _KIN_GUIDE_V1, _sinui_kin_guide_v2
 
     example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
-    m = re.search(r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?=    \S)", example, re.M)
+    from jisikin.migrations import _example_kin_block
+
+    m = _example_kin_block(example)
     old = example.replace(m.group(0), _KIN_GUIDE_V1)
     assert "상투적인 추천·후기 문구" in parse_config(old).product("sinui").kin_guide
     new = _sinui_kin_guide_v2(old, example)
     assert new == example and _sinui_kin_guide_v2(new, example) is None
     edited = old.replace("1. 상투적인 추천·후기 문구를", "1. 직접 고친 문장:")
     assert _sinui_kin_guide_v2(edited, example) is None  # 직접 고친 지침은 그대로
+
+
+def test_sinui_kin_tone_from_any_older_guide():
+    from jisikin.migrations import (
+        _KIN_GUIDE_V1, _KIN_GUIDE_V2, _SINUI_GUIDE_NEW, _SINUI_GUIDE_OLD,
+        _example_kin_block, _sinui_kin_guide, _sinui_kin_guide_v2, _sinui_kin_guide_v3,
+    )
+
+    example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    block = _example_kin_block(example).group(0)
+    for older in ("", _KIN_GUIDE_V1, _KIN_GUIDE_V2):
+        text = example.replace(block, older).replace(_SINUI_GUIDE_NEW, _SINUI_GUIDE_OLD)
+        for fn in (_sinui_kin_guide, _sinui_kin_guide_v2, _sinui_kin_guide_v3):
+            text = fn(text, example) or text
+        assert text == example
+    sinui = parse_config(example).product("sinui")
+    assert "서비스 안내문처럼 쓰지 않는다" in sinui.kin_guide and "짚어볼 수" in sinui.kin_banned
+    assert "상담받을 수 있다고 안내" not in sinui.answer_guide

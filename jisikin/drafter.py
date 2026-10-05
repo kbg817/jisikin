@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 
 from . import calc
@@ -79,9 +80,21 @@ EXAMPLES_TEMPLATE = """
 """
 
 KIN_GUIDE_TEMPLATE = """
-[{name} 지식iN 답변 지침 — 가장 우선. 위 제품 설명·공통 원칙·예시와 다르면 이 지침을 따릅니다]
+[{name} 지식iN 답변 지침 — 가장 우선]
+위 [공통 작성 원칙]의 말투·제품 소개 방식, [소개할 제품/서비스]의 안내 문장, 답변 예시와 다르면 이 지침을 따릅니다.
 {guide}
+- 상담사 이름은 답변 예시나 제품 설명에 나온 이름만 씁니다. 모르면 이름을 지어내거나 00·○○로 비워 두지 말고 '{name}'으로 씁니다.
 """
+
+KIN_REWRITE_SYSTEM = """당신은 네이버 지식iN 답변을 다듬는 편집자입니다.
+답변에서 지적한 문장만 고쳐 쓰고, 나머지 문장은 그대로 둡니다. 새 내용이나 질문에 없는 고민을 덧붙이지 않습니다.
+아래 지침을 지켜서 고친 답변 본문만 출력하세요. (설명, 따옴표 없이)
+
+[{name} 지식iN 답변 지침]
+{guide}"""
+KIN_REWRITE_TRIES = 2
+_SENTENCE_RE = re.compile(r"[^.!?。~\n]+[.!?。~]*")
+_SERVICE_TONE_RE = re.compile(r"(볼|받을|받아볼|드릴|나눌) 수(도)? 있(어요|습니다|답니다|을 거예요)")
 
 RECENT_DRAFTS_TEMPLATE = """
 [최근에 이미 쓴 답변 — 따라 하지 말 것]
@@ -213,6 +226,42 @@ def build_prompt(
     return system, user
 
 
+def kin_issues(product: Product, text: str) -> list[str]:
+    """지식iN 초안에서 다시 고쳐야 할 문장: 금지 표현(kin_banned)이 든 문장, 제품 이름이 나오는
+    '~해볼 수 있어요' 같은 서비스 안내 말투 문장. (지식iN 지침이 있는 제품만)"""
+    if not product.kin_guide.strip():
+        return []
+    out = []
+    for m in _SENTENCE_RE.finditer(text or ""):
+        s = m.group(0).strip()
+        if not s:
+            continue
+        if any(b and b in s for b in product.kin_banned) or (product.name in s and _SERVICE_TONE_RE.search(s)):
+            out.append(s)
+    return out
+
+
+def fix_kin_issues(cfg: AppConfig, product: Product, text: str, store: Store | None = None) -> str:
+    """금지 표현·안내 말투 문장이 있으면 그 문장만 다시 써 달라고 한다 (최대 KIN_REWRITE_TRIES 번)."""
+    system = KIN_REWRITE_SYSTEM.format(name=product.name, guide=product.kin_guide.strip())
+    for _ in range(KIN_REWRITE_TRIES):
+        bad = kin_issues(product, text)
+        if not bad:
+            break
+        hits = [b for b in product.kin_banned if b and b in text]
+        user = (
+            "아래 답변에서 다음 문장이 지침에 어긋납니다. 이 문장만 지인에게 말하듯 짧고 자연스럽게 새로 쓰세요.\n"
+            + "\n".join(f"- {s}" for s in bad)
+            + (f"\n(쓰면 안 되는 표현: {', '.join(hits)})" if hits else "")
+            + f"\n'{product.name}에서 ~해볼 수 있어요' 같은 서비스 안내 말투는 쓰지 마세요.\n\n[답변]\n{text}"
+        )
+        fixed = ask_claude(cfg, system, user, effort="low", store=store, kind="draft")
+        if not fixed:
+            break
+        text = fixed
+    return text
+
+
 def _recent_block(recent: list[str]) -> str:
     if not recent:
         return ""
@@ -273,7 +322,8 @@ def generate_draft(cfg: AppConfig, product: Product, question: dict, store: Stor
     text = ask_claude(cfg, system, user, effort=effort, store=store, kind="draft", tools=tools)
     if not text:
         raise DraftError("초안이 비어 있습니다. 다시 시도해 주세요.")
-    return fit_length(cfg, product, text, store=store)
+    text = fit_length(cfg, product, fix_kin_issues(cfg, product, text, store=store), store=store)
+    return fix_kin_issues(cfg, product, text, store=store)  # 줄이는 중에 다시 생긴 경우
 
 
 def build_social_prompt(

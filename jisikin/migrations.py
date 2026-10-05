@@ -286,9 +286,17 @@ def _cafe(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+def _example_kin_block(example_text: str) -> re.Match | None:
+    """예시 설정의 신의소리 지식iN 지침 묶음 (# kin_guide 설명 ~ kin_guide 글 ~ kin_banned 줄까지)."""
+    return re.search(
+        r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?:    # kin_banned:.*\n    kin_banned:.*\n)?(?=    \S)",
+        example_text, re.M,
+    )
+
+
 def _sinui_kin_guide(text: str, example_text: str) -> str | None:
     """신의소리에 지식iN 전용 답변 지침(kin_guide) 추가 — 예시 설정의 글을 answer_guide 바로 앞에, 이미 있으면 그대로."""
-    m = re.search(r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?=    \S)", example_text, re.M)
+    m = _example_kin_block(example_text)
     parts = split_products(text)
     if m is None or parts is None:
         return None
@@ -311,10 +319,25 @@ _KIN_GUIDE_V1 = '    # kin_guide: 지식iN 답변에만 쓰는 지침 (유튜브
 
 def _sinui_kin_guide_v2(text: str, example_text: str) -> str | None:
     """신의소리 지식iN 지침을 새 지침으로 교체 — 예전 기본 지침 그대로일 때만 (직접 고친 글은 그대로)."""
-    m = re.search(r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?=    \S)", example_text, re.M)
+    m = _example_kin_block(example_text)
     if m is None or _KIN_GUIDE_V1 not in text:
         return None
     return text.replace(_KIN_GUIDE_V1, m.group(0), 1)
+
+
+_KIN_GUIDE_V2 = '    # kin_guide: 지식iN 답변에만 쓰는 지침 (유튜브·카페 댓글에는 안 씀). answer_guide·답변 예시보다 우선합니다.\n    kin_guide: |\n      1. 추천·경험 공유의 취지는 유지하되, 상투적인 표현을 반복하지 않는다.\n         상담을 권하거나 실제 상담 경험을 나누는 내용은 가능하다. 다만 아래 문장을 정형화된 마무리로 사용하지 않는다.\n         금지 표현: "궁금하시면 00쌤 한번 보세요." / "저도 비슷할 때 봤는데 마음이 풀렸어요." / "저도 비슷한 상황이었는데 좋아졌어요."\n         단순히 단어만 바꾸지 말고, 질문자가 겪는 상황과 고민에 맞춰 문장 전체를 새로 작성한다.\n         무엇 때문에 상담을 떠올렸는지, 어떤 고민을 이야기해볼 수 있는지가 앞의 답변과 자연스럽게 이어져야 한다.\n         말투는 지인에게 이야기하듯 편하게 쓰며, 추상적이거나 광고 같은 표현은 피한다.\n         경험담은 실제로 제공된 경험에 한해서 사용한다.\n      2. AI 최종 검수 기준: 답변 작성 후 아래 3가지를 확인한다.\n         - 금지 표현을 그대로 쓰거나 단어만 바꿔 사용했는가?\n         - 질문자의 구체적인 상황에 공감하고, 실제로 물어본 내용에 답했는가?\n         - 추천·경험 공유 문장이 앞의 내용과 연결되지 않고 갑자기 붙었는가?\n         금지 표현이나 뜬금없는 추천이 있거나, 질문에 대한 공감·답변이 부족하면 수정한 뒤 답변한다.\n'
+_SINUI_GUIDE_OLD = '    answer_guide: |\n      신의소리는 신점·타로·사주 상담 사이트입니다.\n      질문자의 고민에 먼저 공감하고, 질문에 정보(생년월일, 상황 등)가 있으면 일반적인 해석 방향을\n      짧게 제시한 뒤, 더 자세한 상담이 필요하면 신의소리에서 상담받을 수 있다고 안내합니다.\n'
+_SINUI_GUIDE_NEW = '    answer_guide: |\n      신의소리는 신점·타로·사주 상담 사이트입니다.\n      질문자의 고민에 먼저 반응하고, 질문에 정보(생년월일, 상황 등)가 있으면 자기 생각이나 조언을 짧게 말한 뒤,\n      신의소리는 지인에게 말하듯 짧고 자연스럽게 추천합니다.\n'
+
+
+def _sinui_kin_guide_v3(text: str, example_text: str) -> str | None:
+    """신의소리 지식iN 말투 지침으로 교체 + 금지 표현(kin_banned), 제품 설명의 '상담받을 수 있다고 안내' 문장 정리.
+    예전 기본 글 그대로일 때만 바꾼다 (직접 고친 글은 그대로)."""
+    m = _example_kin_block(example_text)
+    if m is None:
+        return None
+    new = text.replace(_KIN_GUIDE_V2, m.group(0), 1).replace(_SINUI_GUIDE_OLD, _SINUI_GUIDE_NEW, 1)
+    return None if new == text else new
 
 
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
@@ -335,6 +358,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-cafe", "명운연구소 네이버 카페 글 검색어 추가", _cafe),
     ("2026-10-sinui-kin-guide", "신의소리 지식iN 답변 지침 추가", _sinui_kin_guide),
     ("2026-10-sinui-kin-guide-v2", "신의소리 지식iN 답변 지침 교체", _sinui_kin_guide_v2),
+    ("2026-10-sinui-kin-tone", "신의소리 지식iN 말투 지침·금지 표현", _sinui_kin_guide_v3),
     ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
 ]
 
