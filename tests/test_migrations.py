@@ -1,3 +1,4 @@
+import re
 import shutil
 
 from jisikin.config import EXAMPLE_CONFIG_PATH, load_config, parse_config
@@ -265,3 +266,16 @@ def test_sinui_kin_guide_added_once():
     assert not parse_config(old).product("sinui").kin_guide
     new = _sinui_kin_guide(old, example)
     assert new == example and _sinui_kin_guide(new, example) is None
+
+
+def test_sinui_kin_guide_v2_replaces_only_old_default():
+    from jisikin.migrations import _KIN_GUIDE_V1, _sinui_kin_guide_v2
+
+    example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    m = re.search(r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?=    \S)", example, re.M)
+    old = example.replace(m.group(0), _KIN_GUIDE_V1)
+    assert "상투적인 추천·후기 문구" in parse_config(old).product("sinui").kin_guide
+    new = _sinui_kin_guide_v2(old, example)
+    assert new == example and _sinui_kin_guide_v2(new, example) is None
+    edited = old.replace("1. 상투적인 추천·후기 문구를", "1. 직접 고친 문장:")
+    assert _sinui_kin_guide_v2(edited, example) is None  # 직접 고친 지침은 그대로

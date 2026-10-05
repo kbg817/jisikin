@@ -306,6 +306,17 @@ def _sinui_kin_guide(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+_KIN_GUIDE_V1 = '    # kin_guide: 지식iN 답변에만 쓰는 지침 (유튜브·카페 댓글에는 안 씀). answer_guide·답변 예시보다 우선합니다.\n    kin_guide: |\n      1. 상투적인 추천·후기 문구를 쓰지 않는다.\n         어디에나 붙일 수 있는 추천 문장, 후기형 문장은 질문 내용과 직접 연결되지 않으므로 쓰지 않는다.\n         금지 예시: "궁금하시면 00쌤 한번 보세요." / "저도 비슷할 때 봤는데 마음이 풀렸어요." / "저도 비슷한 상황이었는데 좋아졌어요."\n      2. 단어만 바꾼 비슷한 문장도 같은 문장(중복)으로 본다. 표현이 달라도 의미와 역할이 같으면 같은 문장이다.\n         예) "궁금하시면 00쌤 한번 보세요." / "답답하시면 00쌤께 한번 물어보세요." / "속마음이 궁금하면 00쌤 상담도 괜찮아요."\n             → 모두 \'상담사 추천\'이라는 같은 역할이므로 중복이다.\n         예) "저도 비슷할 때 상담받았어요." / "저도 힘들 때 봤는데 도움이 됐어요." / "저는 상담 후 마음이 정리됐어요."\n             → 모두 같은 후기형 문장이다.\n         여러 답변에서 이런 구조가 반복되면 빼거나 완전히 다른 방식으로 바꾼다.\n      3. 최종 검수: 답변을 쓴 뒤 아래 3가지를 스스로 확인하고, 하나라도 해당되면 고친 뒤 답변한다.\n         - "추천", "상담받아보세요", "저도 비슷했어요" 같은 상투 표현이 있는가?\n         - 마지막 문장이 홍보로 끝나는가?\n         - 질문자가 실제로 궁금해한 내용에 공감 없이 1차적인 답만 했는가?\n      신의소리를 언급하더라도 질문 내용과 직접 이어지는 맥락에서만 하고, 마지막 문장은 질문자에게 건네는 말로 끝낸다.\n'
+
+
+def _sinui_kin_guide_v2(text: str, example_text: str) -> str | None:
+    """신의소리 지식iN 지침을 새 지침으로 교체 — 예전 기본 지침 그대로일 때만 (직접 고친 글은 그대로)."""
+    m = re.search(r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?=    \S)", example_text, re.M)
+    if m is None or _KIN_GUIDE_V1 not in text:
+        return None
+    return text.replace(_KIN_GUIDE_V1, m.group(0), 1)
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -323,6 +334,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-max-bytes", "신의소리·명연당·명운연구소 지식iN 답변 500byte 이하", _max_bytes),
     ("2026-10-cafe", "명운연구소 네이버 카페 글 검색어 추가", _cafe),
     ("2026-10-sinui-kin-guide", "신의소리 지식iN 답변 지침 추가", _sinui_kin_guide),
+    ("2026-10-sinui-kin-guide-v2", "신의소리 지식iN 답변 지침 교체", _sinui_kin_guide_v2),
     ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
 ]
 
