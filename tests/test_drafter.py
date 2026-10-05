@@ -165,7 +165,7 @@ def test_sinui_kin_guide_and_recent_drafts(example_cfg, monkeypatch):
     from jisikin.storage import Store
 
     sinui = example_cfg.product("sinui")
-    assert "상투적인 표현을 반복하지 않는다" in sinui.kin_guide and not example_cfg.product("myeongyeon").kin_guide
+    assert "질문에 먼저 반응하고 추천을 이어간다" in sinui.kin_guide and not example_cfg.product("myeongyeon").kin_guide
     store = Store(":memory:")
     with store._conn() as c:
         for i, pid in enumerate(["sinui", "sinui", "myeongyeon"]):
@@ -185,7 +185,7 @@ def test_sinui_kin_guide_and_recent_drafts(example_cfg, monkeypatch):
     monkeypatch.setattr(drafter, "ask_claude", fake_ask)
     drafter.generate_draft(example_cfg, sinui, dict(QUESTION, doc_id="new"), store=store)
     system, user = calls[0]
-    assert "신의소리 지식iN 답변 지침 — 가장 우선" in system and "추천·경험 공유 문장이 앞의 내용과 연결되지 않고" in system
+    assert "신의소리 지식iN 답변 지침 — 가장 우선" in system and "서비스 안내문처럼 쓰지 않는다" in system
     assert "최근 답변 내용 0" in user and "최근 답변 내용 1" in user and "최근 답변 내용 2" not in user
     assert "검수 기준으로 스스로 확인" in user
     # 다른 제품, 유튜브·카페 댓글에는 넣지 않음
@@ -193,4 +193,35 @@ def test_sinui_kin_guide_and_recent_drafts(example_cfg, monkeypatch):
     drafter.generate_draft(example_cfg, example_cfg.product("myeongyeon"), dict(QUESTION, doc_id="x"), store=store)
     assert "지식iN 답변 지침" not in calls[0][0] and "최근에 이미 쓴 답변" not in calls[0][1]
     social_system, _ = build_social_prompt(example_cfg, sinui, {"platform": "youtube", "title": "t", "body": "b"})
-    assert "상투적인 표현을 반복하지 않는다" not in social_system
+    assert "질문에 먼저 반응하고 추천을 이어간다" not in social_system
+
+
+def test_kin_issues_rewrites_service_tone(example_cfg, monkeypatch):
+    from jisikin import drafter
+    from jisikin.drafter import kin_issues
+
+    sinui = example_cfg.product("sinui")
+    bad = [
+        "혹시 전남친과의 일이 떠올라 찾으시는 거면 신의소리 타로로 그 마음을 짚어볼 수도 있어요.",
+        "오빠가 정말 연락할 마음인지가 계속 걸리면 신의소리 신점에서 이야기해볼 수 있어요.",
+        "정말 올 마음인지 계속 맴돌면 신의소리 신점에서 풀어볼 수 있어요.",
+        "오빠 마음이 정말 궁금하시면 신의소리 타로로 짚어볼 수 있어요.",
+    ]
+    for s in bad:
+        assert kin_issues(sinui, "먼저 연락은 참고 기다려보세요.\n\n" + s) == [s]
+    ok = "유튜브 설명란을 먼저 볼 수 있어요. 저는 신의소리 쌤한테 봤는데 잘 보세요!"
+    assert kin_issues(sinui, ok) == []
+    assert kin_issues(example_cfg.product("myeongyeon"), bad[0]) == []  # 지침 없는 제품은 검사 안 함
+
+    calls = []
+
+    def fake_ask(cfg, system, user, effort=None, store=None, kind="draft", tools=None):
+        calls.append((system, user))
+        if len(calls) == 1:
+            return "속상하시죠ㅠ 연락은 기다려보세요.\n\n" + bad[1]
+        return "속상하시죠ㅠ 연락은 기다려보세요.\n\n저는 신의소리 쌤한테 봤는데 잘 보세요!"
+
+    monkeypatch.setattr(drafter, "ask_claude", fake_ask)
+    out = drafter.generate_draft(example_cfg, sinui, QUESTION)
+    assert out.endswith("잘 보세요!") and len(calls) == 2
+    assert bad[1] in calls[1][1] and "서비스 안내문처럼" in calls[1][0]
