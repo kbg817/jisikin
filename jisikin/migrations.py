@@ -289,7 +289,7 @@ def _cafe(text: str, example_text: str) -> str | None:
 def _example_kin_block(example_text: str) -> re.Match | None:
     """예시 설정의 신의소리 지식iN 지침 묶음 (# kin_guide 설명 ~ kin_guide 글 ~ kin_banned 줄까지)."""
     return re.search(
-        r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?:    # kin_banned:.*\n    kin_banned:.*\n)?(?=    \S)",
+        r"^    # kin_guide:.*\n    kin_guide: \|\n(?:      .*\n|\n)*?(?:    # kin_banned:.*\n    kin_banned:.*\n(?:      +\S.*\n)*)?(?=    \S)",
         example_text, re.M,
     )
 
@@ -340,6 +340,17 @@ def _sinui_kin_guide_v3(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+_KIN_BLOCK_V3 = '    # kin_guide: 지식iN 답변에만 쓰는 지침 (유튜브·카페 댓글에는 안 씀). 공통 원칙·answer_guide·답변 예시보다 우선합니다.\n    kin_guide: |\n      1. 서비스 안내문처럼 쓰지 않는다.\n         "짚어볼 수 있어요", "살펴볼 수 있어요", "마음의 방향을 확인해 보세요", "관계의 흐름을 알아보세요" 같은 표현은 사용하지 않는다.\n      2. 지인에게 댓글을 달듯 편한 구어체로 쓴다.\n         설명하거나 상담으로 유도하려고 길게 돌려 말하지 않는다.\n         "신의소리 00쌤 잘보세요", "저는 00쌤 추천요!"처럼 짧고 직접적인 추천도 가능하다.\n      3. 질문에 먼저 반응하고 추천을 이어간다.\n         질문 속 구체적인 상황에 대해 자신의 생각이나 조언을 먼저 말한다.\n         추천을 넣을 명분을 만들려고 질문에 없는 고민을 추가하지 않는다.\n      4. 추천 문장을 매번 같은 형식으로 끝내지 않는다.\n         "궁금하시면", "계속 마음에 걸리면", "저도 비슷한 상황이었는데"를 습관적으로 붙이지 않는다.\n         문장의 길이와 위치는 질문에 맞게 정한다.\n    # kin_banned: 지식iN 초안에 들어가면 AI 가 그 문장을 다시 고쳐 씁니다 (신의소리가 나온 문장의 "~볼 수 있어요" 안내 말투도 함께 잡음)\n    kin_banned: [짚어볼 수, 살펴볼 수, 마음의 방향, 관계의 흐름, 궁금하시면, 계속 마음에 걸리면, 마음에 걸리면, 저도 비슷한 상황, 저도 비슷할 때]\n'
+
+
+def _sinui_kin_guide_v4(text: str, example_text: str) -> str | None:
+    """신의소리 지식iN 지침에 호칭·반복 구조·어색한 표현 규칙 추가 (예전 기본 글 그대로일 때만)."""
+    m = _example_kin_block(example_text)
+    if m is None or _KIN_BLOCK_V3 not in text:
+        return None
+    return text.replace(_KIN_BLOCK_V3, m.group(0), 1)
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -359,6 +370,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-sinui-kin-guide", "신의소리 지식iN 답변 지침 추가", _sinui_kin_guide),
     ("2026-10-sinui-kin-guide-v2", "신의소리 지식iN 답변 지침 교체", _sinui_kin_guide_v2),
     ("2026-10-sinui-kin-tone", "신의소리 지식iN 말투 지침·금지 표현", _sinui_kin_guide_v3),
+    ("2026-10-sinui-kin-tone-2", "신의소리 지식iN 지침 추가 (호칭·어색한 표현)", _sinui_kin_guide_v4),
     ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
 ]
 
