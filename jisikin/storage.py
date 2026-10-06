@@ -417,6 +417,27 @@ class Store:
                 s["today"] += 1
         return out
 
+    def today_by_channel(self, now: datetime | None = None) -> dict[str, dict[str, int]]:
+        """오늘 직원별·채널별 답변완료 수: {username: {kin, cafe, youtube, threads}} (같은 글은 마지막 기록 한 번만)."""
+        now = now or now_kst()
+        today = iso(now.replace(hour=0, minute=0, second=0, microsecond=0))
+        out: dict[str, dict[str, int]] = {}
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT a.username, CASE WHEN q.doc_id IS NOT NULL THEN 'kin' ELSE s.platform END AS channel
+                   FROM activity a
+                   LEFT JOIN questions q ON q.doc_id = a.doc_id AND q.status = 'answered'
+                   LEFT JOIN social_posts s ON s.post_id = a.doc_id AND s.status = 'answered'
+                   WHERE a.status = 'answered' AND a.at >= ?
+                     AND a.id = (SELECT MAX(id) FROM activity b WHERE b.doc_id = a.doc_id AND b.status = 'answered')
+                     AND (q.doc_id IS NOT NULL OR s.post_id IS NOT NULL)""",
+                (today,),
+            ).fetchall()
+        for r in rows:
+            d = out.setdefault(r["username"], {"kin": 0, "cafe": 0, "youtube": 0, "threads": 0})
+            d[r["channel"]] = d.get(r["channel"], 0) + 1
+        return out
+
     # ------------------------------------------------------------ 직원 계정
 
     def list_users(self) -> list[dict]:

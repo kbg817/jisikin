@@ -177,5 +177,12 @@ def test_daily_goal_per_staff(server):
     staff = app.test_client()
     login(staff, "kim", "pw1234")
     assert staff.post("/api/questions/1/status", json={"status": "answered"}, headers=H).get_json() == {"ok": True}
+    from jisikin.social import SocialPost
+
+    state.store.upsert_social(SocialPost(platform="cafe", post_id="cafe:a/1", url="https://cafe.naver.com/a/1", title="작명 문의"), "작명")
+    assert staff.post("/api/social/cafe:a%2F1/status", json={"status": "answered"}, headers=H).get_json() == {"ok": True}
     goals = staff.get("/api/meta").get_json()["goals"]
-    assert [(g["name"], g["today"], g["goal"]) for g in goals] == [("정소연", 1, 30), ("염영주", 0, 30)]
+    assert [g["name"] for g in goals] == ["정소연", "염영주"]
+    kim = {it["channel"]: (it["done"], it["goal"]) for it in goals[0]["items"]}
+    assert kim == {"kin": (1, 30), "cafe": (1, 7), "youtube": (0, 3)}
+    assert all(it["done"] == 0 for it in goals[1]["items"])

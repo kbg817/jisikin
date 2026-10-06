@@ -204,12 +204,12 @@ function renderStatus() {
   const box = $("#goals");
   if (box) {
     box.hidden = !goals.length;
-    box.innerHTML = goals.map((g) => {
-      const done = g.today >= g.goal;
-      const pct = Math.min(100, Math.round((g.today / g.goal) * 100));
-      return `<span class="goal ${done ? "done" : ""}" title="오늘 완료한 지식iN 답변 + 댓글 · 하루 목표 ${g.goal}개" style="--p:${pct}%">`
-        + `${esc(g.name)} <b>${g.today}</b>/${g.goal}${done ? " ✓" : ""}</span>`;
-    }).join("");
+    box.innerHTML = goals.map((g) => `<span class="goal-person"><b class="nm">${esc(g.name)}</b>${g.items.map((it) => {
+      const ok = it.done >= it.goal;
+      const pct = Math.min(100, Math.round((it.done / it.goal) * 100));
+      return `<span class="goal ${ok ? "done" : ""}" title="오늘 완료한 ${esc(it.label)} · 하루 목표 ${it.goal}개" style="--p:${pct}%">`
+        + `${esc(it.label)} <b>${it.done}</b>/${it.goal}${ok ? " ✓" : ""}</span>`;
+    }).join("")}</span>`).join("");
   }
   const inGoals = new Set(goals.map((g) => g.username));
   const people = meta.auth ? meta.answer_stats.filter((s) => s.today && !inGoals.has(s.username)) : [];

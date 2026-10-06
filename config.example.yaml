@@ -34,7 +34,10 @@ settings:
   youtube_results: 25         # 검색어당 영상 수 (최대 50)
   cafe_interval_minutes: 30  # [카페] 네이버 카페 글을 몇 분마다 찾을지. 0 이면 끔 (제품별 cafe.keywords 가 있을 때만)
   cafe_results: 100           # 카페 검색어당 글 수 (최대 100)
-  daily_goal: 30              # 직원 1명의 하루 목표 (지식iN 답변 + 댓글 완료 수, 상단에 '이름 n/30'). 0 이면 표시 안 함
+  # 직원 1명의 하루 목표 (상단에 '이름 지식iN n/30 · 카페 n/7 · 유튜브 n/3'). 0 이면 그 항목은 표시 안 함
+  goal_kin: 30
+  goal_cafe: 7
+  goal_youtube: 3
   track_check_hour: 6         # [작업 결과] 매일 이 시각(한국 시간)에 내 답변·댓글이 아직 보이는지 확인. -1 이면 끔
   youtube_daily_units: 9000   # 유튜브 API 하루 사용 상한 (무료 10,000). 검색어 1개 = 약 101
                               #   하루 사용량 ≈ 검색어 수 × 101 × (24 ÷ social_interval_hours)
