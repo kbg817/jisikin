@@ -330,7 +330,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         if request.headers.get("X-Jisikin") != "1":
             abort(403)
 
-    def goal_payload(cfg) -> list[dict]:
+    def goal_payload(cfg, only: str | None = None) -> list[dict]:
+        """only: 이 직원 것만 (직원 화면). None 이면 모두 (관리자 화면)."""
         targets = [(k, n, g) for k, n, g in (
             ("kin", "지식iN", cfg.settings.goal_kin), ("cafe", "카페", cfg.settings.goal_cafe), ("youtube", "유튜브", cfg.settings.goal_youtube),
         ) if g > 0]
@@ -340,7 +341,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         return [
             {"username": u["username"], "name": u["name"],
              "items": [{"channel": k, "label": n, "done": done.get(u["username"], {}).get(k, 0), "goal": g} for k, n, g in targets]}
-            for u in state.store.list_users() if u["active"]
+            for u in state.store.list_users() if u["active"] and (only is None or u["username"] == only)
         ]
 
     def people() -> dict[str, str]:
@@ -525,6 +526,9 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         track_runs = state.store.recent_runs(1, mode="track")
         names = people()
         stats = state.store.answer_stats()
+        is_admin = g.user["role"] == "admin"
+        if not is_admin:  # 직원은 자기 실적만 (다른 직원 현황은 관리자만)
+            stats = {u: s for u, s in stats.items() if u == g.user["username"]}
         return jsonify(
             products=product_payload(cfg),
             counts=state.store.todo_counts(cfg.settings.max_age_days),
@@ -542,7 +546,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                 {"username": u, "name": names.get(u, u), **s} for u, s in sorted(stats.items(), key=lambda kv: -kv[1]["today"])
             ],
             # 직원별 오늘 목표: 지식iN·카페·유튜브 따로 (사용 중인 직원 계정 모두, 0건이어도 보임)
-            goals=goal_payload(cfg),
+            goals=goal_payload(cfg, None if is_admin else g.user["username"]),
             track={
                 "hour": cfg.settings.track_check_hour,
                 "next_at": iso(state.next_track_at or state.next_track_time()),

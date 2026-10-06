@@ -181,8 +181,18 @@ def test_daily_goal_per_staff(server):
 
     state.store.upsert_social(SocialPost(platform="cafe", post_id="cafe:a/1", url="https://cafe.naver.com/a/1", title="작명 문의"), "작명")
     assert staff.post("/api/social/cafe:a%2F1/status", json={"status": "answered"}, headers=H).get_json() == {"ok": True}
-    goals = staff.get("/api/meta").get_json()["goals"]
-    assert [g["name"] for g in goals] == ["정소연", "염영주"]
-    kim = {it["channel"]: (it["done"], it["goal"]) for it in goals[0]["items"]}
+    # 직원은 자기 것만
+    meta = staff.get("/api/meta").get_json()
+    assert [g["name"] for g in meta["goals"]] == ["정소연"]
+    kim = {it["channel"]: (it["done"], it["goal"]) for it in meta["goals"][0]["items"]}
     assert kim == {"kin": (1, 30), "cafe": (1, 7), "youtube": (0, 3)}
-    assert all(it["done"] == 0 for it in goals[1]["items"])
+    other = app.test_client()
+    login(other, "lee", "pw1234")
+    meta_lee = other.get("/api/meta").get_json()
+    assert [g["name"] for g in meta_lee["goals"]] == ["염영주"] and meta_lee["answer_stats"] == []
+    # 관리자는 모두
+    admin = app.test_client()
+    login(admin, "boss", "보스비번!123")
+    meta_admin = admin.get("/api/meta").get_json()
+    assert [g["name"] for g in meta_admin["goals"]] == ["정소연", "염영주"]
+    assert [s["username"] for s in meta_admin["answer_stats"]] == ["kim"]
