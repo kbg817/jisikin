@@ -87,14 +87,19 @@ def test_search_cafe_uses_cafe_endpoint():
 
 
 def test_cafe_migration_adds_keywords_once():
+    from jisikin.migrations import _CAFE_BLOCK, _CAFE_MORE, _cafe_more
+
     example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
-    start = example.index("    cafe:\n      # [카페]")
-    end = example.index("\n", example.index("      keywords:", start)) + 1
-    old = example[:start] + example[end:]
+    old = example.replace(_CAFE_BLOCK, "")
+    for block in _CAFE_MORE.values():
+        old = old.replace(block, "")
+    old = old.replace("  cafe_results: 100           #", "  cafe_results: 50            #")
     assert parse_config(old).cafe_queries() == []
-    new = _cafe(old, example)
-    assert new == example and _cafe(new, example) is None
-    assert {p.id for p, _ in parse_config(new).cafe_queries()} == {"myeongun"}
+    new = _cafe_more(_cafe(old, example), example)
+    assert new == example and _cafe(new, example) is None and _cafe_more(new, example) is None
+    cfg = parse_config(new)
+    assert {p.id for p, _ in cfg.cafe_queries()} == {"sinui", "myeongyeon", "myeongun"}
+    assert cfg.settings.cafe_results == 100
 
 
 def test_cafe_collect_api_needs_key(tmp_path, monkeypatch):

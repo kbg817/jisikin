@@ -351,6 +351,32 @@ def _sinui_kin_guide_v4(text: str, example_text: str) -> str | None:
     return text.replace(_KIN_BLOCK_V3, m.group(0), 1)
 
 
+_CAFE_MORE = {
+    "sinui": '    cafe:\n      # [카페] 탭: 네이버 카페에 올라온 신점·타로·연애 고민 글\n      keywords: [신점, 타로, 재회, 점집, 무당, 신당, 연애, 속마음, 궁합, 부적, 이별, 운세]\n',
+    "myeongyeon": '    cafe:\n      # [카페] 탭: 네이버 카페에 올라온 사주·철학관 글 (OO살: 자주 찾는 살 이름)\n      keywords: [사주, 철학원, 철학관, 삼재, 일주, 귀인, 망신살, 도화살, 역마살, 백호살, 원진살, 홍염살, 괴강살, 화개살]\n',
+}
+
+
+def _cafe_more(text: str, example_text: str) -> str | None:
+    """신의소리·명연당에 카페 검색어(cafe:) 추가 (social: 바로 뒤에, 이미 있으면 그대로) + 카페 검색어당 글 50→100."""
+    parts = split_products(text)
+    if parts is None:
+        return None
+    head, blocks, tail = parts
+    out = []
+    for pid, block in blocks:
+        if pid in _CAFE_MORE and not re.search(r"^    cafe:", block, re.M):
+            m = _SOCIAL_RE.search(block)
+            if m:
+                block = block[: m.end()] + _CAFE_MORE[pid] + block[m.end() :]
+            else:
+                block = block.rstrip("\n") + "\n" + _CAFE_MORE[pid]
+        out.append((pid, block))
+    new = join_products(head, out, tail)
+    new = re.sub(r"^  cafe_results: 50 ([^\n]*)$", r"  cafe_results: 100\1", new, count=1, flags=re.M)
+    return None if new == text else new
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -371,6 +397,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-sinui-kin-guide-v2", "신의소리 지식iN 답변 지침 교체", _sinui_kin_guide_v2),
     ("2026-10-sinui-kin-tone", "신의소리 지식iN 말투 지침·금지 표현", _sinui_kin_guide_v3),
     ("2026-10-sinui-kin-tone-2", "신의소리 지식iN 지침 추가 (호칭·어색한 표현)", _sinui_kin_guide_v4),
+    ("2026-10-cafe-more", "신의소리·명연당 카페 검색어 추가, 카페 검색어당 글 100개", _cafe_more),
     ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
 ]
 
