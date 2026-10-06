@@ -659,12 +659,26 @@ function bytesHtml(text, limit) {
   return `<span class="bytes ${n > limit ? "over" : ""}" title="한글 1자 2byte, 영문·숫자·공백 1byte">${num(n)} / ${num(limit)} byte${n > limit ? " · 너무 길어요" : ""}</span>`;
 }
 
+// 명연당 계산 결과 (AI 초안이 쓴 사주·이름 계산) — 직원이 만세력·한자 사전과 바로 대조
+function calcBoxHtml(calc) {
+  if (!calc || (!calc.warning && !(calc.rows || []).length)) return "";
+  const rows = (calc.rows || []).map((r) => `
+      <div class="calc-row ${r.kind === "error" ? "err" : ""}"><b>${esc(r.title)}</b>${r.lines.map((l) => `<div>${esc(l)}</div>`).join("")}</div>`).join("");
+  return `
+      <details class="calc-box" open>
+        <summary>${calc.warning ? "⚠ " : "🧮 "}명연당 계산 결과 ${rows ? `<span class="muted">(초안의 사주·한자 값은 이 결과로 썼어요)</span>` : ""}</summary>
+        ${calc.warning ? `<p class="calc-warn">${esc(calc.warning)}</p>` : ""}
+        ${rows || `<p class="muted">계산한 것이 없어요 (생년월일·한자가 없는 질문)</p>`}
+      </details>`;
+}
+
 function draftBoxHtml(q, social) {
   const what = social ? (q.platform === "youtube" ? "영상" : "글") : "질문";
   const limit = social ? 0 : (productById(q.product)?.max_bytes || 0);
   return `
       <div class="draft" hidden>
         <textarea spellcheck="false">${esc(q.draft || "")}</textarea>
+        <div class="calc-slot">${social ? "" : calcBoxHtml(q.draft_calc)}</div>
         <div class="row">
           <button class="btn primary" data-act="copy-open">📋 복사하고 ${what} 열기</button>
           <button class="btn" data-act="copy">복사만</button>
@@ -938,6 +952,8 @@ async function draft(card, btn, regen) {
   try {
     const data = await api(itemPath(card, "/draft"), {});
     ta.value = data.draft;
+    const slot = box.querySelector(".calc-slot");
+    if (slot) slot.innerHTML = calcBoxHtml(data.calc);
     box.hidden = false;
     refreshBytes(card);
     ok = true;

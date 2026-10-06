@@ -170,3 +170,77 @@ def test_tool_rounds_are_capped(example_cfg, monkeypatch):
     _install(monkeypatch, loop)
     with pytest.raises(DraftError, match="반복"):
         generate_draft(example_cfg, example_cfg.product("myeongyeon"), QUESTION)
+
+
+SAJU_RESULT = {
+    "input": {"calendar": "solar", "leap": False, "solarDate": "1990-06-08", "time": "10:30", "gender": "female"},
+    "pillars": {k: {"label": n, "ganji": g, "korean": h} for k, n, g, h in (
+        ("year", "년주", "庚午", "경오"), ("month", "월주", "壬午", "임오"), ("day", "일주", "甲辰", "갑진"), ("hour", "시주", "己巳", "기사"))},
+    "elements": {"목": 1, "화": 3, "토": 2, "금": 1, "수": 1},
+}
+NAME_RESULT = {"name": "김연우", "chars": [
+    {"korean": "김", "hanja": "金", "strokes": 8, "resourceElement": "금"},
+    {"korean": "연", "hanja": "衍", "strokes": 9, "resourceElement": "화"},
+    {"korean": "우", "hanja": "宇", "strokes": 6, "resourceElement": "목"}],
+    "pronunciationElement": {"arrangement": "목-토-토"}}
+
+
+def test_guessed_saju_is_retried_and_summarized(example_cfg, monkeypatch):
+    """생년월일이 있는데 계산 없이 쓰면 한 번 더: 도구로 계산하게 하고, 계산 결과를 초안 아래에 보여준다."""
+    from jisikin.drafter import generate_draft_with_calc
+
+    monkeypatch.setenv("MYD_CALC_KEY", KEY)
+    monkeypatch.setattr(calc, "run_tool", lambda name, inp: (json.dumps(SAJU_RESULT, ensure_ascii=False), False))
+    guessed = SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text="을축 일주시네요")])
+    tool = SimpleNamespace(stop_reason="tool_use", content=[_tool_use("saju_calculator", {"year": 1990, "month": 6, "day": 8, "hour": 10, "calendar": "solar", "gender": "female"})])
+    final = SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text="갑진(甲辰) 일주시네요")])
+    messages = _install(monkeypatch, [guessed, tool, final])
+    text, info = generate_draft_with_calc(example_cfg, example_cfg.product("myeongyeon"), QUESTION)
+    assert text == "갑진(甲辰) 일주시네요" and len(messages.calls) == 3
+    retry_user = messages.calls[1]["messages"][0]["content"]
+    assert "을축 일주시네요" in retry_user and "saju_calculator" in retry_user
+    assert info["warning"] == ""
+    row = info["rows"][0]
+    assert row["kind"] == "saju" and "양력 1990-06-08 10:30" in row["lines"][0] and "여" in row["lines"][0]
+    assert "일주 甲辰(갑진)" in row["lines"][1] and row["lines"][2] == "오행: 목 1 · 화 3 · 토 2 · 금 1 · 수 1"
+
+
+def test_unchecked_hanja_is_flagged(example_cfg, monkeypatch):
+    """衍 을 도구로 확인하지 않고 '수' 라고 쓰면 다시 쓰게 하고, 그래도 안 되면 경고를 남긴다."""
+    from jisikin.drafter import calc_issues, calc_summary, generate_draft_with_calc
+
+    product = example_cfg.product("myeongun")
+    q = {"title": "아기 이름 봐주세요", "body": "김연우로 지으려는데 어떤가요"}
+    assert calc_issues(product, q, "넓을 연(衍)은 수 오행이라", []) != []
+    trace = [{"tool": "name_evaluator", "input": {"name": "김연우"}, "content": json.dumps(NAME_RESULT, ensure_ascii=False), "error": False}]
+    assert calc_issues(product, q, "넓을 연(衍)은 화 오행이라 甲木 일간에", trace) == []
+    summary = calc_summary(trace)
+    assert summary[0]["kind"] == "name" and "衍(연·9획·화)" in summary[0]["lines"][0]
+
+    monkeypatch.setenv("MYD_CALC_KEY", KEY)
+    guessed = lambda: SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="text", text="넓을 연(衍)은 수 오행이에요")])
+    messages = _install(monkeypatch, [guessed(), guessed()])
+    text, info = generate_draft_with_calc(example_cfg, product, q)
+    assert len(messages.calls) == 2 and "衍" in info["warning"]
+
+
+def test_draft_api_saves_calc_summary(tmp_path, monkeypatch):
+    import shutil
+
+    from jisikin import web
+    from jisikin.config import EXAMPLE_CONFIG_PATH
+    from jisikin.naver import RawQuestion
+    from jisikin.web import AppState, create_app
+
+    cfg_path = tmp_path / "config.yaml"
+    shutil.copyfile(EXAMPLE_CONFIG_PATH, cfg_path)
+    state = AppState(cfg_path, tmp_path / "db.sqlite", env_path=tmp_path / ".env")
+    info = {"rows": [{"kind": "saju", "title": "사주 (만세력)", "lines": ["일주 甲辰"]}], "warning": ""}
+    monkeypatch.setattr(web, "generate_draft_with_calc", lambda cfg, product, q, store=None: ("초안", info))
+    state.store.upsert_raw(RawQuestion(doc_id="77", url="https://kin.naver.com/qna/detail.naver?docId=77", title="사주 봐주세요 1990년 6월 8일"), "검색:t")
+    with state.store._conn() as c:
+        c.execute("UPDATE questions SET product='myeongyeon' WHERE doc_id='77'")
+    client = create_app(state).test_client()
+    r = client.post("/api/questions/77/draft", json={}, headers={"X-Jisikin": "1"})
+    assert r.get_json() == {"draft": "초안", "calc": info}
+    assert state.store.get("77")["draft_calc"] == info
