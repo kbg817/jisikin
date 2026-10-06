@@ -528,6 +528,12 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             answer_stats=[
                 {"username": u, "name": names.get(u, u), **s} for u, s in sorted(stats.items(), key=lambda kv: -kv[1]["today"])
             ],
+            # 직원별 오늘 목표 (사용 중인 직원 계정 모두, 0건이어도 보임)
+            goals=[
+                {"username": u["username"], "name": u["name"], "today": stats.get(u["username"], {}).get("today", 0),
+                 "goal": cfg.settings.daily_goal}
+                for u in state.store.list_users() if u["active"]
+            ] if cfg.settings.daily_goal and auth.auth_enabled() else [],
             track={
                 "hour": cfg.settings.track_check_hour,
                 "next_at": iso(state.next_track_at or state.next_track_time()),

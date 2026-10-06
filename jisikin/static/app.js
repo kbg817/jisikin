@@ -199,7 +199,20 @@ function myToday() {
 function renderStatus() {
   // 상단: 오늘 완료한 답변·댓글 (내가 얼마나 했는지 한눈에)
   const today = meta.answer_stats.reduce((a, s) => a + s.today, 0);
-  const people = meta.auth ? meta.answer_stats.filter((s) => s.today) : [];
+  // 직원별 하루 목표 (예: 정소연 12/30) — 목표가 있는 직원은 오른쪽 칸에, 나머지(관리자 등)만 여기
+  const goals = meta.goals || [];
+  const box = $("#goals");
+  if (box) {
+    box.hidden = !goals.length;
+    box.innerHTML = goals.map((g) => {
+      const done = g.today >= g.goal;
+      const pct = Math.min(100, Math.round((g.today / g.goal) * 100));
+      return `<span class="goal ${done ? "done" : ""}" title="오늘 완료한 지식iN 답변 + 댓글 · 하루 목표 ${g.goal}개" style="--p:${pct}%">`
+        + `${esc(g.name)} <b>${g.today}</b>/${g.goal}${done ? " ✓" : ""}</span>`;
+    }).join("");
+  }
+  const inGoals = new Set(goals.map((g) => g.username));
+  const people = meta.auth ? meta.answer_stats.filter((s) => s.today && !inGoals.has(s.username)) : [];
   const who = people.map((s) => `${esc(s.name)} <b>${s.today}</b>`).join(" · ");
   const week = meta.answer_stats.reduce((a, s) => a + (s.week || 0), 0);
   $("#run-status").innerHTML =

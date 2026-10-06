@@ -138,6 +138,7 @@ class Settings:
     # 네이버 카페 글 (지식iN 과 같은 네이버 API 키 사용)
     cafe_interval_minutes: int = 30      # 몇 분마다 찾을지. 0 이면 끔
     cafe_results: int = 50               # 검색어당 글 수 (최대 100)
+    daily_goal: int = 30                 # 직원 1명의 하루 목표 (답변·댓글 완료 수). 0 이면 표시 안 함
     # 작업 결과
     track_check_hour: int = 6            # 매일 이 시각(한국 시간)에 내 답변·댓글이 보이는지 확인. -1 이면 끔
 
@@ -272,6 +273,7 @@ def parse_config(text: str) -> AppConfig:
     settings.threads_results = max(1, min(settings.threads_results, 100))
     settings.cafe_interval_minutes = max(0, settings.cafe_interval_minutes)
     settings.cafe_results = max(1, min(settings.cafe_results, 100))
+    settings.daily_goal = max(0, min(settings.daily_goal, 1000))
     if not -1 <= settings.track_check_hour <= 23:
         raise ConfigError("settings.track_check_hour 는 0~23 (끄려면 -1) 이어야 합니다.")
     raw_sources = (data.get("settings") or {}).get("exposure_sources")

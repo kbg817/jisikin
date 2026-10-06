@@ -51,6 +51,12 @@ header.top h1 a { text-decoration: none; }
 .today b { font-size: 16px; }
 .run-status .who { font-size: 13px; }
 .run-status .who b { color: var(--text); }
+/* 직원별 하루 목표: 이름 n/30, 칸 배경이 채운 만큼 차오름 */
+.goals { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.goal { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 13px; white-space: nowrap;
+  background: linear-gradient(90deg, rgba(3, 199, 90, .16) var(--p), transparent var(--p)); color: var(--text); }
+.goal b { font-size: 15px; }
+.goal.done { border-color: #03c75a; color: #0a5c30; font-weight: 600; }
 details.menu { position: relative; }
 details.menu > summary { list-style: none; }
 details.menu > summary::-webkit-details-marker { display: none; }
