@@ -198,7 +198,7 @@ function myToday() {
 
 function renderStatus() {
   // 상단: 오늘 완료한 답변·댓글 (내가 얼마나 했는지 한눈에)
-  const today = meta.answer_stats.reduce((a, s) => a + s.today, 0);
+  const today = meta.answer_stats.reduce((a, s) => a + s.today, 0);  // 직원 화면이면 서버가 자기 것만 보내 줌
   // 직원별 하루 목표 (예: 정소연 12/30) — 목표가 있는 직원은 오른쪽 칸에, 나머지(관리자 등)만 여기
   const goals = meta.goals || [];
   const box = $("#goals");
