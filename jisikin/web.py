@@ -330,6 +330,19 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         if request.headers.get("X-Jisikin") != "1":
             abort(403)
 
+    def goal_payload(cfg) -> list[dict]:
+        targets = [(k, n, g) for k, n, g in (
+            ("kin", "지식iN", cfg.settings.goal_kin), ("cafe", "카페", cfg.settings.goal_cafe), ("youtube", "유튜브", cfg.settings.goal_youtube),
+        ) if g > 0]
+        if not targets or not auth.auth_enabled():
+            return []
+        done = state.store.today_by_channel()
+        return [
+            {"username": u["username"], "name": u["name"],
+             "items": [{"channel": k, "label": n, "done": done.get(u["username"], {}).get(k, 0), "goal": g} for k, n, g in targets]}
+            for u in state.store.list_users() if u["active"]
+        ]
+
     def people() -> dict[str, str]:
         names = {"": "", auth.admin_username(): "관리자"}
         names.update({u["username"]: u["name"] for u in state.store.list_users()})
@@ -528,12 +541,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             answer_stats=[
                 {"username": u, "name": names.get(u, u), **s} for u, s in sorted(stats.items(), key=lambda kv: -kv[1]["today"])
             ],
-            # 직원별 오늘 목표 (사용 중인 직원 계정 모두, 0건이어도 보임)
-            goals=[
-                {"username": u["username"], "name": u["name"], "today": stats.get(u["username"], {}).get("today", 0),
-                 "goal": cfg.settings.daily_goal}
-                for u in state.store.list_users() if u["active"]
-            ] if cfg.settings.daily_goal and auth.auth_enabled() else [],
+            # 직원별 오늘 목표: 지식iN·카페·유튜브 따로 (사용 중인 직원 계정 모두, 0건이어도 보임)
+            goals=goal_payload(cfg),
             track={
                 "hour": cfg.settings.track_check_hour,
                 "next_at": iso(state.next_track_at or state.next_track_time()),
