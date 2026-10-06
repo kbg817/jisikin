@@ -11,6 +11,7 @@
 <header class="top">
   <h1><a href="/">답변·댓글 센터</a></h1>
   <div class="run-status" id="run-status">{% block status %}{% endblock %}</div>
+  <div class="goals" id="goals" hidden></div>
   {% block actions %}{% endblock %}
   {% if user.role == "admin" or (auth_on and user.username) %}
   <details class="menu" id="menu">

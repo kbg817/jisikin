@@ -164,3 +164,18 @@ def test_public_serve_requires_password(monkeypatch, capsys):
 
     assert main(["serve", "--host", "0.0.0.0", "--no-browser"]) == 1
     assert "JISIKIN_ADMIN_PASSWORD" in capsys.readouterr().err
+
+
+def test_daily_goal_per_staff(server):
+    """상단에 직원마다 '이름 오늘완료/목표' (0건이어도, 꺼진 계정은 빼고)."""
+    from jisikin.auth import hash_password
+
+    state, app = server
+    state.store.save_user("kim", "정소연", hash_password("pw1234"))
+    state.store.save_user("lee", "염영주", hash_password("pw1234"))
+    state.store.save_user("old", "퇴사자", hash_password("pw1234"), active=False)
+    staff = app.test_client()
+    login(staff, "kim", "pw1234")
+    assert staff.post("/api/questions/1/status", json={"status": "answered"}, headers=H).get_json() == {"ok": True}
+    goals = staff.get("/api/meta").get_json()["goals"]
+    assert [(g["name"], g["today"], g["goal"]) for g in goals] == [("정소연", 1, 30), ("염영주", 0, 30)]
