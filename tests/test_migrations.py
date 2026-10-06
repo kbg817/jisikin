@@ -44,6 +44,7 @@ def test_adds_myeongun_and_reorders_keeping_user_edits(tmp_path):
         "세이프맘 탄소매트 추가",
         "신의소리·명연당·명운연구소 지식iN 답변 500byte 이하",
         "신의소리 지식iN 답변 지침 추가",
+        "신의소리·명연당 카페 검색어 추가, 카페 검색어당 글 100개",
     ]
     assert ids(path) == ["sinui", "myeongyeon", "myeongun", "daksaren", "eumpa", "chidifit", "safemom"]
     text = path.read_text(encoding="utf-8")
