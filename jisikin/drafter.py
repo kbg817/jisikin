@@ -5,8 +5,10 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+from contextvars import ContextVar
 from datetime import datetime
 
 from . import calc
@@ -168,6 +170,111 @@ class DraftError(Exception):
     pass
 
 
+# ---- 계산 기록·확인: AI 가 계산 도구를 건너뛰고 짐작한 사주·한자를 잡아낸다 ----
+
+_calc_trace: ContextVar[list | None] = ContextVar("calc_trace", default=None)
+
+GANJI_CHARS = set("甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥木火土金水")
+_HANJA_RE = re.compile(r"[\u4e00-\u9fff\uf900-\ufaff]")
+_BIRTH_RE = re.compile(
+    r"(?:19|20)\d{2}\s*(?:년|[.\-/])\s*\d{1,2}"     # 1995년 3월, 1995.3
+    r"|\d{2}\s*년\s*생|\d{2}\s*년\s*\d{1,2}\s*월"    # 95년생, 95년 3월
+    r"|(?<!\d)(?:19|20)\d{6}(?!\d)"                  # 19950305
+    r"|[양음]력\s*\d"
+)
+CALC_RETRY_NOTE = """
+
+[먼저 쓴 초안]
+{draft}
+
+[고칠 점 — 계산하지 않고 짐작한 부분]
+{issues}
+계산 도구로 확인한 값만 써서 초안을 처음부터 다시 쓰세요. 도구로 확인하지 못한 한자의 오행·획수는 쓰지 마세요."""
+
+
+def _tool_json(t: dict) -> object:
+    if t.get("error"):
+        return None
+    try:
+        return json.loads(t.get("content") or "null")
+    except ValueError:
+        return None
+
+
+def calc_issues(product: Product, question: dict, text: str, trace: list[dict]) -> list[str]:
+    """계산 도구를 쓸 수 있는데 짐작으로 쓴 곳: 생년월일이 있는데 사주 계산을 안 함 / 초안의 한자를 도구로 확인 안 함."""
+    issues = []
+    q_text = f"{question.get('title', '')}\n{question.get('body') or question.get('snippet') or ''}"
+    saju_ok = any(t["tool"] == "saju_calculator" and not t.get("error") for t in trace)
+    if "saju" in product.calc_tools and _BIRTH_RE.search(q_text) and not saju_ok and not any(
+        t["tool"] == "saju_calculator" for t in trace
+    ):
+        issues.append("질문에 생년월일이 있는데 saju_calculator 로 사주를 계산하지 않았습니다. 먼저 계산하고 그 값으로 쓰세요.")
+    if {"name", "hanja"} & set(product.calc_tools):
+        checked: set[str] = set()
+        for t in trace:
+            data = _tool_json(t)
+            if t["tool"] == "name_evaluator" and isinstance(data, dict):
+                checked |= {c.get("hanja") for c in data.get("chars") or [] if c.get("hanja")}
+            elif t["tool"] == "hanja_lookup":
+                items = data if isinstance(data, list) else (data or {}).get("items") if isinstance(data, dict) else []
+                checked |= {c.get("hanja") for c in items or [] if isinstance(c, dict) and c.get("hanja")}
+        unchecked = sorted({c for c in _HANJA_RE.findall(text or "") if c not in GANJI_CHARS and c not in checked})
+        if unchecked:
+            issues.append(
+                f"초안에 쓴 한자 {', '.join(unchecked)} 를 계산 도구로 확인하지 않았습니다. "
+                "이름이면 name_evaluator, 한자 후보면 hanja_lookup 으로 획수·자원오행을 확인하세요."
+            )
+    return issues
+
+
+def calc_summary(trace: list[dict]) -> list[dict]:
+    """초안 아래 [명연당 계산 결과] 칸에 보여줄 요약 (직원이 만세력·한자 사전과 바로 대조)."""
+    rows = []
+    for t in trace:
+        data = _tool_json(t)
+        if t.get("error") or data is None:
+            rows.append({"kind": "error", "title": "계산 오류", "lines": [str(t.get("content") or "")[:200]]})
+            continue
+        if t["tool"] == "saju_calculator" and isinstance(data, dict):
+            inp = data.get("input") or {}
+            cal = "음력" if inp.get("calendar") == "lunar" else "양력"
+            head = f"양력 {inp.get('solarDate', '?')} {inp.get('time') or '시간 모름'}"
+            gender = {"male": "남", "female": "여"}.get(inp.get("gender") or "", "성별 모름")
+            raw = t.get("input") or {}
+            asked = f"{cal} {raw.get('year')}-{raw.get('month')}-{raw.get('day')}" + (" 윤달" if raw.get("leap") else "")
+            pillars = data.get("pillars") or {}
+            cols = [
+                f"{(pillars.get(k) or {}).get('label', n)} {(pillars.get(k) or {}).get('ganji', '―')}"
+                + (f"({pillars[k]['korean']})" if pillars.get(k) else "")
+                for k, n in (("year", "년주"), ("month", "월주"), ("day", "일주"), ("hour", "시주"))
+            ]
+            el = data.get("elements") or {}
+            rows.append({
+                "kind": "saju", "title": "사주 (만세력)",
+                "lines": [
+                    f"넣은 값: {asked} → {head} · {gender}",
+                    " · ".join(cols),
+                    "오행: " + " · ".join(f"{k} {el.get(k, 0)}" for k in ("목", "화", "토", "금", "수")),
+                ],
+            })
+        elif t["tool"] == "name_evaluator" and isinstance(data, dict):
+            chars = " ".join(
+                f"{c.get('hanja') or c.get('korean')}({c.get('korean')}·{c.get('strokes')}획"
+                + (f"·{c['resourceElement']}" if c.get("resourceElement") else "") + ")"
+                for c in data.get("chars") or []
+            )
+            pe = (data.get("pronunciationElement") or {}).get("arrangement", "")
+            rows.append({"kind": "name", "title": f"이름 {data.get('name', '')}",
+                         "lines": [f"한자(음·획수·자원오행): {chars}", f"발음오행: {pe}"]})
+        elif t["tool"] == "hanja_lookup":
+            items = data if isinstance(data, list) else []
+            eum = (t.get("input") or {}).get("eum", "")
+            line = " ".join(f"{c.get('hanja')}({c.get('meaning', '')}·{c.get('strokes')}획·{c.get('resourceElement')})" for c in items[:15])
+            rows.append({"kind": "hanja", "title": f"'{eum}' 한자 후보", "lines": [line or "없음"]})
+    return rows
+
+
 def ai_status() -> tuple[bool, str]:
     try:
         import anthropic  # noqa: F401
@@ -303,6 +410,13 @@ def fit_length(cfg: AppConfig, product: Product, text: str, store: Store | None 
 
 
 def generate_draft(cfg: AppConfig, product: Product, question: dict, store: Store | None = None) -> str:
+    return generate_draft_with_calc(cfg, product, question, store=store)[0]
+
+
+def generate_draft_with_calc(
+    cfg: AppConfig, product: Product, question: dict, store: Store | None = None
+) -> tuple[str, dict | None]:
+    """초안과 함께 계산 기록 요약을 돌려준다. 계산을 쓰지 않는 제품이면 (초안, None)."""
     examples = store.starred_examples(product.id, MAX_EXAMPLES) if store else []
     tools: list[dict] = []
     calc_mode = None
@@ -319,11 +433,33 @@ def generate_draft(cfg: AppConfig, product: Product, question: dict, store: Stor
     effort = None
     if tools and EFFORTS.index(cfg.ai.effort) < EFFORTS.index(CALC_MIN_EFFORT):
         effort = CALC_MIN_EFFORT
-    text = ask_claude(cfg, system, user, effort=effort, store=store, kind="draft", tools=tools)
-    if not text:
-        raise DraftError("초안이 비어 있습니다. 다시 시도해 주세요.")
+    trace: list[dict] = []
+    token = _calc_trace.set(trace)
+    try:
+        text = ask_claude(cfg, system, user, effort=effort, store=store, kind="draft", tools=tools)
+        if not text:
+            raise DraftError("초안이 비어 있습니다. 다시 시도해 주세요.")
+        issues = calc_issues(product, question, text, trace) if calc_mode == "tools" else []
+        if issues:  # 한 번만 다시: 도구로 확인하고 다시 쓰게
+            retry = ask_claude(
+                cfg, system, user + CALC_RETRY_NOTE.format(draft=text, issues="\n".join(f"- {i}" for i in issues)),
+                effort=effort, store=store, kind="draft", tools=tools,
+            )
+            if retry:
+                text = retry
+            issues = calc_issues(product, question, text, trace)
+    finally:
+        _calc_trace.reset(token)
+    calc_info = None
+    if calc_mode:
+        warning = ""
+        if calc_mode == "missing":
+            warning = "명연당 계산 연결이 꺼져 있어 계산 없이 작성했습니다. 사주·한자 값은 직접 확인하세요."
+        elif issues:
+            warning = "계산으로 확인하지 못한 부분이 있어요: " + " / ".join(issues)
+        calc_info = {"rows": calc_summary(trace), "warning": warning}
     text = fit_length(cfg, product, fix_kin_issues(cfg, product, text, store=store), store=store)
-    return fix_kin_issues(cfg, product, text, store=store)  # 줄이는 중에 다시 생긴 경우
+    return fix_kin_issues(cfg, product, text, store=store), calc_info  # 줄이는 중에 다시 생긴 경우도
 
 
 def build_social_prompt(
@@ -492,6 +628,9 @@ def ask_claude(
                 content, is_error = calc.run_tool(block.name, block.input)
             except calc.CalcUnavailable as e:
                 raise DraftError(str(e)) from e
+            trace = _calc_trace.get()
+            if trace is not None:
+                trace.append({"tool": block.name, "input": block.input, "content": content, "error": is_error})
             result = {"type": "tool_result", "tool_use_id": block.id, "content": content}
             if is_error:
                 result["is_error"] = True

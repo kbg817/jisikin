@@ -22,7 +22,7 @@ from .collector import collect, effective_interval, estimate_api_calls_per_day, 
 from .config import AppConfig, ConfigError
 from .diagnose import run_diagnostics
 from .calc import calc_status
-from .drafter import MAX_EXAMPLES, USAGE_KINDS, DraftError, ai_status, generate_draft, generate_social_draft, monthly_usage
+from .drafter import MAX_EXAMPLES, USAGE_KINDS, DraftError, ai_status, generate_draft_with_calc, generate_social_draft, monthly_usage
 from .exposure import all_targets, check_exposure
 from .keywords import SOURCE_LABELS, due_products, ensure_default_seeds, generate_for_product, save_seed_settings, seed_settings
 from .matcher import Matcher
@@ -573,7 +573,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         )
         keep = (
             "doc_id url title snippet body answer_count reward asked_at first_seen product score "
-            "categories matches status status_by status_changed_at draft priority detail_fetched_at"
+            "categories matches status status_by status_changed_at draft draft_calc priority detail_fetched_at"
         ).split()
         items = []
         for r in rows:
@@ -621,11 +621,11 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         if product is None:
             return jsonify(error="어느 제품과 관련된 질문인지 알 수 없습니다"), 400
         try:
-            draft = generate_draft(state.cfg, product, q, store=state.store)
+            draft, calc_info = generate_draft_with_calc(state.cfg, product, q, store=state.store)
         except DraftError as e:
             return jsonify(error=str(e)), 400
-        state.store.set_draft(doc_id, draft)
-        return jsonify(draft=draft)
+        state.store.set_draft(doc_id, draft, calc=calc_info)
+        return jsonify(draft=draft, calc=calc_info)
 
     @app.post("/api/questions/<doc_id>/draft/save")
     def api_draft_save(doc_id: str):

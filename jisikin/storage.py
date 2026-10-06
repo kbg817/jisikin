@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS questions (
     draft             TEXT,
     draft_at          TEXT,
     draft_edited      INTEGER NOT NULL DEFAULT 0,  -- 1: 직원이 AI 초안을 고쳐서 저장함
+    draft_calc        TEXT,                        -- AI 초안이 쓴 명연당 계산 요약 (JSON)
     views             INTEGER,
     in_feed           INTEGER NOT NULL DEFAULT 1,  -- 1: 새 질문 수집으로 찾음, 0: 상위노출 확인으로만 찾음
     status_by         TEXT                         -- 상태를 마지막으로 바꾼 직원 아이디
@@ -546,13 +547,20 @@ class Store:
                 out[(g["product"], g["keyword"])] = len(g["posts"])
         return out
 
-    def set_draft(self, doc_id: str, draft: str, edited: bool = False) -> None:
-        """AI 가 새로 쓴 초안(edited=False) 또는 직원이 고친 초안(edited=True) 저장."""
+    def set_draft(self, doc_id: str, draft: str, edited: bool = False, calc: dict | None = None) -> None:
+        """AI 가 새로 쓴 초안(edited=False) 또는 직원이 고친 초안(edited=True) 저장.
+        calc: AI 초안이 쓴 계산 요약 (새 AI 초안마다 바뀜, 없으면 지움)."""
         with self._conn() as c:
-            c.execute(
-                "UPDATE questions SET draft=?, draft_at=?, draft_edited=? WHERE doc_id=?",
-                (draft, iso(now_kst()), int(edited), doc_id),
-            )
+            if edited:
+                c.execute(
+                    "UPDATE questions SET draft=?, draft_at=?, draft_edited=1 WHERE doc_id=?",
+                    (draft, iso(now_kst()), doc_id),
+                )
+            else:
+                c.execute(
+                    "UPDATE questions SET draft=?, draft_at=?, draft_edited=0, draft_calc=? WHERE doc_id=?",
+                    (draft, iso(now_kst()), json.dumps(calc, ensure_ascii=False) if calc else None, doc_id),
+                )
 
     def recent_drafts(self, product: str, limit: int, exclude: str = "", days: int = 14) -> list[str]:
         """최근에 쓴 지식iN 답변 초안 (같은 문장 구조를 되풀이하지 않게 AI 에게 보여줌). 새것부터."""
@@ -1263,6 +1271,8 @@ def _migrate(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE questions ADD COLUMN status_by TEXT")
     if "draft_edited" not in cols:
         c.execute("ALTER TABLE questions ADD COLUMN draft_edited INTEGER NOT NULL DEFAULT 0")
+    if "draft_calc" not in cols:
+        c.execute("ALTER TABLE questions ADD COLUMN draft_calc TEXT")
     ex_cols = {r[1] for r in c.execute("PRAGMA table_info(answer_examples)")}
     if ex_cols and "channel" not in ex_cols:
         c.execute("ALTER TABLE answer_examples ADD COLUMN channel TEXT NOT NULL DEFAULT 'kin'")
@@ -1280,6 +1290,11 @@ def _row_to_dict(row: sqlite3.Row, json_keys: tuple[str, ...] = ("sources", "cat
             d[key] = json.loads(d.get(key) or "[]")
         except ValueError:
             d[key] = []
+    if d.get("draft_calc"):
+        try:
+            d["draft_calc"] = json.loads(d["draft_calc"])
+        except ValueError:
+            d["draft_calc"] = None
     return d
 
 
