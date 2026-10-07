@@ -171,3 +171,30 @@ def test_results_api(store_with_work, tmp_path):
     assert meta["track"]["hour"] == 6 and meta["track"]["next_at"]
     assert client.post("/api/results/check", json={}).status_code == 403
     assert client.post("/api/results/check", json={}, headers=H).get_json()["started"] is True
+
+
+def test_kin_answer_position_and_likes():
+    from jisikin.tracker import kin_answer_position
+
+    def item(text, likes):
+        return (f'<div class="answer-content__item"><div>{text}</div>'
+                f'<button class="_recommendBtn"><span class="_recommendCount">{likes}</span></button></div>')
+
+    other = "다른 업체 답변입니다. 저희 철학관으로 오세요. 이름은 수리가 중요합니다."
+    html = ("<html><body><div class='c-heading'>질문</div><div>"
+            + item(other, 12) + item(other + " 두번째", 3) + item(MINE, 2) + "</div></body></html>")
+    assert kin_answer_position(html, MINE) == {"rank": 3, "total": 3, "likes": 2, "top_likes": 12}
+    # 좋아요를 '좋아요 5' 글자로만 보여주는 화면
+    html2 = f"<html><body><div class='answer-content__item'><div>{MINE}</div><span>좋아요 5</span></div></body></html>"
+    assert kin_answer_position(html2, MINE) == {"rank": 1, "total": 1, "likes": 5}
+    assert kin_answer_position("<html><body><div>없음</div></body></html>", MINE) == {}
+
+
+def test_prev_rank_shows_drop(tmp_path):
+    from jisikin.storage import Store
+
+    store = Store(tmp_path / "db.sqlite")
+    store.add_answer_check("1", "visible", rank=1, likes=3, total=4, top_likes=2)
+    store.add_answer_check("1", "visible", rank=3, likes=3, total=5, top_likes=9)
+    c = store.latest_answer_checks()["1"]
+    assert (c["rank"], c["prev_rank"], c["total"], c["top_likes"]) == (3, 1, 5, 9)
