@@ -206,6 +206,17 @@ def _kin_rank_check(client, store) -> list[str]:
             out.append(f"       좋아요 후보 <{tag.name} {str(attrs)[:220]}> 글자='{tag.get_text(' ', strip=True)[:30]}'")
         tail = re.sub(r"\s+", " ", str(first))[-500:]
         out.append(f"       첫 답변 칸 끝부분 … {tail}")
+        # 첫 답변 칸의 버튼들 (좋아요 버튼이 어떤 이름인지)
+        for b in first.find_all(["button", "a"])[:12]:
+            cls = " ".join(b.get("class") or [])
+            txt = b.get_text(" ", strip=True)[:20]
+            if cls or txt:
+                out.append(f"       버튼 <{b.name} class='{cls[:80]}'> '{txt}'")
+        out.append(f"       첫 답변 칸 class 목록: {sorted({c for t in first.find_all(True) for c in (t.get('class') or [])})[:60]}")
+        # 숫자가 페이지 속 데이터(스크립트)에 들어 있는지
+        for m in list(re.finditer(r"[\"']?\w*(?:[Rr]ecommend|[Ll]ike|[Ss]ympathy|[Gg]ood|[Tt]humb|[Ee]mpathy)\w*[\"']?\s*[:=]\s*[\"']?\d+", html))[:6]:
+            a, b2 = max(0, m.start() - 80), min(len(html), m.end() + 40)
+            out.append(f"       데이터 속 숫자 … {re.sub(chr(10), ' ', html[a:b2])[:200]}")
     if not good:
         out += _page_debug(client, "답변 순위", {
             "답변 칸": r"answer-content__item|_answer\b|answerDetail",
