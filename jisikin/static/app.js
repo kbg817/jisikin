@@ -86,6 +86,19 @@ function relTime(iso) {
   return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}.`;
 }
 
+// 직원이 처리한 시각: "23분 전 · 10/7(화) 14:05" (몇 분 전 + 날짜·요일·시각)
+function doneTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  const day = "일월화수목금토"[d.getDay()];
+  const abs = `${d.getMonth() + 1}/${d.getDate()}(${day}) ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const sec = (Date.now() - d.getTime()) / 1000;
+  const rel = sec < 86400 * 7 ? relTime(iso) : "";
+  return `<span class="done-at" title="${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}">${rel ? `${rel} · ` : ""}${abs}</span>`;
+}
+
 function untilTime(iso) {
   if (!iso) return "";
   const sec = (new Date(iso).getTime() - Date.now()) / 1000;
@@ -514,7 +527,7 @@ function resultCardHtml(i) {
       <div class="meta result-state">${resultStateHtml(i)}${exp}</div>
       <div class="meta">
         ${productBadge(p, null)}
-        <span>완료 ${relTime(i.status_changed_at)}${by}</span>
+        <span>완료${by}${doneTime(i.status_changed_at)}</span>
         ${yt && i.views != null ? `<span>조회 ${compactNum(i.views)}</span>` : ""}
         ${(i.draft || "").trim() ? `<button class="linkish" data-act="toggle-text">올린 내용 보기</button>` : ""}
       </div>
@@ -600,8 +613,8 @@ function productBadge(p, lowProduct) {
 
 function statusLabel(q, social) {
   const by = meta.auth && q.status_by ? ` · ${esc(personName(q.status_by))}` : "";
-  if (q.status === "answered") return `<b>${social ? "댓글완료" : "답변완료"}${by}</b>`;
-  if (q.status === "skipped") return `<b>건너뜀${by}</b>`;
+  if (q.status === "answered") return `<b>${social ? "댓글완료" : "답변완료"}${by}</b>${doneTime(q.status_changed_at)}`;
+  if (q.status === "skipped") return `<b>건너뜀${by}</b>${doneTime(q.status_changed_at)}`;
   // 다른 사람이 이미 열어본 글: 같은 질문에 두 명이 답하지 않도록 표시
   if (q.status === "opened" && meta.auth && q.status_by && q.status_by !== meta.user.username) {
     return `<span class="badge busy" title="${esc(personName(q.status_by))} 님이 이 글을 열어봤습니다">${esc(personName(q.status_by))} 확인 중</span>`;

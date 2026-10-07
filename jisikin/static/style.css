@@ -419,3 +419,6 @@ details.panel summary { cursor: pointer; font-size: 14px; }
 .calc-box .calc-row b { display: block; font-size: 12px; color: var(--muted, #6b7280); }
 .calc-box .calc-row.err { color: #b91c1c; }
 .calc-box .calc-warn { margin: 6px 0 0; color: #b45309; font-weight: 600; }
+
+/* 처리 시각 (답변완료 · 정소연 옆) */
+.done-at { color: var(--muted); font-size: 12px; margin-left: 6px; white-space: nowrap; }
