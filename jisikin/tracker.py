@@ -150,7 +150,56 @@ def _likes(el) -> int | None:
     return int(m.group(1).replace(",", "")) if m else None
 
 
-def kin_answer_position(html: str, mine: str) -> dict:
+# 네이버 '좋아요' 모듈: 숫자는 화면을 연 뒤 별도 주소에서 불러와 HTML 에 없다 (data-sid · data-cid 로 찾음)
+LIKE_API_URLS = (
+    "https://kin.like.naver.com/v1/search/contents",
+    "https://common.like.naver.com/v1/search/contents",
+)
+
+
+def like_keys(el) -> list[str]:
+    """답변 칸 안의 좋아요 모듈 열쇠들 ('KIN[...]' 꼴)."""
+    keys = []
+    for tag in el.find_all(attrs={"data-cid": True}):
+        sid, cid = (tag.get("data-sid") or "").strip(), (tag.get("data-cid") or "").strip()
+        if sid and cid:
+            key = f"{sid}[{cid}]"
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+def fetch_like_counts(client, keys: list[str]) -> tuple[dict[str, int], str]:
+    """좋아요 수 불러오기 → ({열쇠: 수}, 진단 메모). 실패해도 예외 없이 빈 결과."""
+    import json as _json
+
+    if not keys or client is None:
+        return {}, "열쇠 없음"
+    notes = []
+    for url in LIKE_API_URLS:
+        try:
+            text = client._get_html(url, params={"suppress_response_codes": "true", "q": "|".join(keys)}, site="좋아요")
+        except NaverError as e:
+            notes.append(f"{url.split('/')[2]}: {e}")
+            continue
+        body = text.strip()
+        m = re.search(r"\{.*\}", body, re.S)  # JSONP 로 와도 괄호 안 JSON 만
+        try:
+            data = _json.loads(m.group(0) if m else body)
+        except ValueError:
+            notes.append(f"{url.split('/')[2]}: JSON 아님 {body[:80]!r}")
+            continue
+        out: dict[str, int] = {}
+        for c in data.get("contents") or []:
+            key = f"{c.get('serviceId', '')}[{c.get('contentsId', '')}]"
+            out[key] = sum(int(r.get("count") or 0) for r in c.get("reactions") or [])
+        if out:
+            return out, f"{url.split('/')[2]} 성공"
+        notes.append(f"{url.split('/')[2]}: 결과 없음 {body[:120]!r}")
+    return {}, " / ".join(notes)
+
+
+def kin_answer_position(html: str, mine: str, client=None) -> dict:
     """내 답변이 답변 중 몇 번째인지 + 좋아요 수 + 다른 답변 중 가장 많은 좋아요.
     {rank, total, likes, top_likes} — 못 읽은 값은 빠진다 (네이버 화면 구조에 따라)."""
     soup = BeautifulSoup(html, "html.parser")
@@ -163,6 +212,11 @@ def kin_answer_position(html: str, mine: str) -> dict:
     if idx is None:
         return {}
     likes = [_likes(e) for e in items]
+    if all(n is None for n in likes) and client is not None:
+        keys = [like_keys(e) for e in items]
+        counts, _ = fetch_like_counts(client, [k for ks in keys for k in ks])
+        if counts:
+            likes = [max((counts[k] for k in ks if k in counts), default=None) for ks in keys]
     others = [n for i, n in enumerate(likes) if i != idx and n is not None]
     out = {"rank": idx + 1, "total": max(len(items), _parse_answer_count(soup) or 0)}
     if likes[idx] is not None:
@@ -191,7 +245,7 @@ def check_kin(client: NaverClient, item: dict) -> dict:
         raise NaverError("질문 페이지에서 답변을 읽지 못했습니다 (화면 구조가 바뀌었을 수 있음)")
     res = {"state": state, "adopted": adopted}
     if state == VISIBLE:
-        res.update(kin_answer_position(html, item["draft"]))  # 몇 번째 답변인지·좋아요
+        res.update(kin_answer_position(html, item["draft"], client))  # 몇 번째 답변인지·좋아요
     return res
 
 

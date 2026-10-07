@@ -171,7 +171,7 @@ def _kin_rank_check(client, store) -> list[str]:
     """[작업 결과] 답변 순위: 답변완료한 지식iN 글 하나를 열어 답변 칸·좋아요를 읽을 수 있는지 (실패해도 전체 점검은 OK)."""
     from bs4 import BeautifulSoup
 
-    from .tracker import _answer_items, _likes, kin_answer_position
+    from .tracker import _answer_items, _likes, fetch_like_counts, kin_answer_position, like_keys
 
     item = next((i for i in (store.answered_items() if store else []) if i["platform"] == "kin" and (i.get("draft") or "").strip()), None)
     if item is None:
@@ -182,14 +182,30 @@ def _kin_rank_check(client, store) -> list[str]:
         return [f"[??] 지식iN 답변 순위: 질문 페이지를 못 열었습니다 ({e})"]
     soup = BeautifulSoup(html, "html.parser")
     items = _answer_items(soup)
-    likes = [_likes(e) for e in items]
-    pos = kin_answer_position(html, item["draft"])
+    html_likes = [_likes(e) for e in items]
+    keys = [like_keys(e) for e in items]
+    api_note = ""
+    if all(n is None for n in html_likes):
+        counts, api_note = fetch_like_counts(client, [k for ks in keys for k in ks])
+        likes = [max((counts[k] for k in ks if k in counts), default=None) for ks in keys]
+    else:
+        likes = html_likes
+    pos = kin_answer_position(html, item["draft"], client)
     good = bool(pos.get("rank")) and any(n is not None for n in likes)
     out = [
         f"[{'OK' if good else '??'}] 지식iN 답변 순위 '{item['title'][:25]}': 답변 칸 {len(items)}개, "
         f"좋아요 읽음 {sum(n is not None for n in likes)}개 {likes[:8]}, "
         f"내 답변 {str(pos.get('rank')) + '번째' if pos.get('rank') else '못 찾음'}"
     ]
+    out.append(f"     좋아요 모듈 열쇠: {[k[:2] for k in keys[:3]]}" + (f" / 좋아요 불러오기: {api_note[:300]}" if api_note else ""))
+    if items and not good:
+        # 첫 답변 칸에서 좋아요·추천처럼 보이는 부분의 원래 모양 (Claude 가 구조를 맞추도록)
+        first = items[0]
+        for tag in first.find_all(class_=re.compile(r"like|recommend|sympathy|empathy|reaction|u_", re.I))[:4]:
+            attrs = {k: (" ".join(v) if isinstance(v, list) else v) for k, v in tag.attrs.items()}
+            out.append(f"       좋아요 후보 <{tag.name} {str(attrs)[:220]}> 글자='{tag.get_text(' ', strip=True)[:30]}'")
+        tail = re.sub(r"\s+", " ", str(first))[-500:]
+        out.append(f"       첫 답변 칸 끝부분 … {tail}")
     if not good:
         out += _page_debug(client, "답변 순위", {
             "답변 칸": r"answer-content__item|_answer\b|answerDetail",
