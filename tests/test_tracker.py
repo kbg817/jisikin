@@ -198,3 +198,33 @@ def test_prev_rank_shows_drop(tmp_path):
     store.add_answer_check("1", "visible", rank=3, likes=3, total=5, top_likes=9)
     c = store.latest_answer_checks()["1"]
     assert (c["rank"], c["prev_rank"], c["total"], c["top_likes"]) == (3, 1, 5, 9)
+
+
+def test_like_counts_from_like_module():
+    """좋아요 숫자가 HTML 에 없고 좋아요 모듈(data-sid/data-cid)만 있을 때 좋아요 주소에서 불러온다."""
+    import json
+
+    from jisikin.tracker import kin_answer_position
+
+    def item(text, cid):
+        return f'<div class="answer-content__item"><div>{text}</div><div class="u_likeit_list_module" data-sid="KIN" data-cid="{cid}"></div></div>'
+
+    other = "다른 업체 답변입니다. 저희 철학관으로 오세요. 이름은 수리가 중요합니다."
+    html = f"<html><body><div>{item(other, 'a1')}{item(MINE, 'a2')}</div></body></html>"
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def _get_html(self, url, params=None, headers=None, site=""):
+            self.calls.append((url, params))
+            data = {"contents": [
+                {"serviceId": "KIN", "contentsId": "a1", "reactions": [{"reactionType": "like", "count": 9}]},
+                {"serviceId": "KIN", "contentsId": "a2", "reactions": [{"reactionType": "like", "count": 4}]},
+            ]}
+            return "jQuery123(" + json.dumps(data) + ");"
+
+    client = FakeClient()
+    assert kin_answer_position(html, MINE, client) == {"rank": 2, "total": 2, "likes": 4, "top_likes": 9}
+    assert client.calls[0][1]["q"] == "KIN[a1]|KIN[a2]"
+    assert kin_answer_position(html, MINE) == {"rank": 2, "total": 2}  # 클라이언트 없으면 순위만
