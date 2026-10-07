@@ -3,7 +3,8 @@
 어떤 답변/댓글이 '내 것'인지는 [완료]를 누를 때 저장된 최종 글(초안 칸 내용)로 찾는다.
 계정 이름이 바뀌어도 상관없고, 올리면서 조금 고친 정도는 비슷한 글로 인정한다.
 
-- 지식iN: 질문 페이지를 열어 내 답변 문장이 페이지에 있는지 + 채택 여부
+- 지식iN: 질문 페이지를 열어 내 답변 문장이 페이지에 있는지 + 채택 여부 + 답변 중 몇 번째인지·좋아요 수
+          (좋아요 많은 답변이 위로 가므로, 다른 업체 답변에 밀렸는지 매일 본다)
 - 유튜브: 공개 댓글(인기순 100개) 중 내 댓글이 있는지 + 몇 위인지·좋아요 수.
           API 키로는 남에게 보이는 댓글만 나오므로, 없으면 삭제·스팸 처리로 숨겨진 것.
 - 쓰레드: Meta 검수 전에는 남의 글 답글을 볼 수 없어 확인하지 않음
@@ -123,6 +124,54 @@ def check_kin_page(html: str, mine: str) -> tuple[str, bool | None]:
     return VISIBLE, None  # 답변 칸을 못 찾았지만 페이지에는 있음
 
 
+_LIKE_CLASS_RE = re.compile(r"like|recommend|sympathy|empathy|good|thumb", re.I)
+_LIKE_TEXT_RE = re.compile(r"(?:좋아요|추천|공감)\s*([\d,]+)")
+
+
+def _answer_items(soup: BeautifulSoup) -> list:
+    """화면에 보이는 순서대로 답변 칸들 (안쪽에 겹친 칸은 뺌)."""
+    for sel in _ANSWER_ITEM_SELECTORS:
+        items = _safe_select(soup, sel)
+        if items:
+            ids = {id(e) for e in items}
+            return [e for e in items if not any(id(p) in ids for p in e.parents)]
+    return []
+
+
+def _likes(el) -> int | None:
+    """답변 칸 하나의 좋아요(추천·공감) 수. 못 읽으면 None."""
+    for tag in el.find_all(class_=_LIKE_CLASS_RE):
+        t = tag.get_text(" ", strip=True)
+        if len(t) <= 20:
+            m = re.search(r"(\d[\d,]*)", t)
+            if m:
+                return int(m.group(1).replace(",", ""))
+    m = _LIKE_TEXT_RE.search(el.get_text(" ", strip=True))
+    return int(m.group(1).replace(",", "")) if m else None
+
+
+def kin_answer_position(html: str, mine: str) -> dict:
+    """내 답변이 답변 중 몇 번째인지 + 좋아요 수 + 다른 답변 중 가장 많은 좋아요.
+    {rank, total, likes, top_likes} — 못 읽은 값은 빠진다 (네이버 화면 구조에 따라)."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    items = _answer_items(soup)
+    if not items:
+        return {}
+    idx = next((i for i, e in enumerate(items) if text_found(mine, e.get_text(" ", strip=True))), None)
+    if idx is None:
+        return {}
+    likes = [_likes(e) for e in items]
+    others = [n for i, n in enumerate(likes) if i != idx and n is not None]
+    out = {"rank": idx + 1, "total": max(len(items), _parse_answer_count(soup) or 0)}
+    if likes[idx] is not None:
+        out["likes"] = likes[idx]
+    if others:
+        out["top_likes"] = max(others)
+    return out
+
+
 def _safe_select(soup: BeautifulSoup, sel: str) -> list:
     try:
         return soup.select(sel)
@@ -140,7 +189,10 @@ def check_kin(client: NaverClient, item: dict) -> dict:
     state, adopted = check_kin_page(html, item["draft"])
     if state == ERROR:
         raise NaverError("질문 페이지에서 답변을 읽지 못했습니다 (화면 구조가 바뀌었을 수 있음)")
-    return {"state": state, "adopted": adopted}
+    res = {"state": state, "adopted": adopted}
+    if state == VISIBLE:
+        res.update(kin_answer_position(html, item["draft"]))  # 몇 번째 답변인지·좋아요
+    return res
 
 
 # ---------------------------------------------------------------- 유튜브

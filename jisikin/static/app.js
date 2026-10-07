@@ -314,6 +314,8 @@ function renderResultsBar() {
     const n = { visible: 0, problem: 0, unknown: 0 };
     resultItems.forEach((i) => n[resultBucket(i)]++);
     parts.push(`<b class="ok-txt">✅ ${n.visible}</b> · <b class="bad-txt">⚠️ ${n.problem}</b> · 확인 전 ${n.unknown}`);
+    const rank = kinRankSummary(resultItems.filter((i) => !state.product || i.product === state.product));
+    if (rank) parts.push(`<br>${rank}`);
   }
   $("#results-status").innerHTML = parts.join(" · ");
   const btn = $("#results-check-btn");
@@ -454,11 +456,14 @@ function resultBucket(i) {
   return "unknown";
 }
 
+const isDropped = (i) => i.platform === "kin" && i.check?.rank && i.check.prev_rank && i.check.rank > i.check.prev_rank;
+const isLowRank = (i) => i.platform === "kin" && i.check?.state === "visible" && i.check.rank > 3;
+
 function filteredResults(byProduct = true) {
   return (resultItems || []).filter((i) =>
     (!byProduct || !state.product || i.product === state.product)
     && (!state.rPlatform || i.platform === state.rPlatform)
-    && (!state.rState || resultBucket(i) === state.rState)
+    && (!state.rState || (state.rState === "dropped" ? isDropped(i) : state.rState === "low" ? isLowRank(i) : resultBucket(i) === state.rState))
     && (!state.rBy || i.status_by === state.rBy));
 }
 
@@ -501,8 +506,11 @@ function resultStateHtml(i) {
   out.push(`<span class="rs-badge ${cls}" title="${esc(hints[c.state] || "")}">${label}</span>`);
   if (c.state === "visible") {
     if (c.adopted) out.push(`<span class="badge hot">채택됨</span>`);
-    if (c.rank) out.push(`<span class="badge ${c.rank <= 3 ? "hot" : ""}" title="인기 댓글순 순위">인기 댓글 ${c.rank}위</span>`);
-    if (c.likes != null) out.push(`<span title="내 댓글 좋아요">♥ ${compactNum(c.likes)}</span>`);
+    if (i.platform === "kin") out.push(...kinRankHtml(c));
+    else {
+      if (c.rank) out.push(`<span class="badge ${c.rank <= 3 ? "hot" : ""}" title="인기 댓글순 순위">인기 댓글 ${c.rank}위</span>`);
+      if (c.likes != null) out.push(`<span title="내 댓글 좋아요">♥ ${compactNum(c.likes)}</span>`);
+    }
     if (c.replies) out.push(`<span title="내 댓글에 달린 답글">답글 ${c.replies}</span>`);
     if (c.note) out.push(`<span>${esc(c.note)}</span>`);
     if (c.visible_days > 1) out.push(`<span title="보이는 걸 확인한 날 수">${c.visible_days}일째 노출</span>`);
@@ -510,6 +518,36 @@ function resultStateHtml(i) {
   if (c.state !== "visible" && c.prev_state === "visible") out.push(`<b class="bad-txt">지난 확인까지는 보였음</b>`);
   out.push(`<span>확인 ${relTime(c.checked_at)}</span>`);
   return out.join("");
+}
+
+// 지식iN: 답변 중 몇 번째인지 + 좋아요 + 지난 확인보다 밀렸는지
+function kinRankHtml(c) {
+  const out = [];
+  if (!c.rank) return out;
+  const total = c.total ? `/${c.total}개` : "";
+  out.push(`<span class="badge rank ${c.rank === 1 ? "hot" : c.rank <= 3 ? "mid" : "low"}" title="질문 페이지에서 내 답변이 위에서 몇 번째인지 (좋아요 많은 답변이 위로 감)">답변 ${c.rank}번째${total}</span>`);
+  if (c.prev_rank && c.rank > c.prev_rank) out.push(`<b class="bad-txt" title="지난 확인 ${c.prev_rank}번째">▼ ${c.rank - c.prev_rank}칸 밀림</b>`);
+  else if (c.prev_rank && c.rank < c.prev_rank) out.push(`<b class="ok-txt" title="지난 확인 ${c.prev_rank}번째">▲ ${c.prev_rank - c.rank}칸 올라감</b>`);
+  if (c.likes != null || c.top_likes != null) {
+    const mine = c.likes != null ? `내 좋아요 ${c.likes}` : "내 좋아요 ?";
+    const top = c.top_likes != null ? ` · 다른 답변 최고 ${c.top_likes}` : "";
+    const behind = c.likes != null && c.top_likes != null && c.top_likes > c.likes;
+    out.push(`<span class="${behind ? "bad-txt" : ""}" title="좋아요 수 (다른 답변 최고보다 적으면 그 답변이 위에 있음)">${mine}${top}</span>`);
+  }
+  return out;
+}
+
+function kinRankSummary(items) {
+  const ranked = items.filter((i) => i.platform === "kin" && i.check?.state === "visible" && i.check.rank);
+  if (!ranked.length) return "";
+  const n = { first: 0, top3: 0, low: 0, dropped: 0 };
+  for (const i of ranked) {
+    const r = i.check.rank;
+    if (r === 1) n.first++; else if (r <= 3) n.top3++; else n.low++;
+    if (i.check.prev_rank && r > i.check.prev_rank) n.dropped++;
+  }
+  return `지식iN 답변 순위: <b class="ok-txt">1번째 ${n.first}</b> · 2~3번째 ${n.top3} · <b class="bad-txt">4번째 이하 ${n.low}</b>`
+    + (n.dropped ? ` · <b class="bad-txt">▼ 지난 확인보다 밀림 ${n.dropped}</b>` : "");
 }
 
 function resultCardHtml(i) {

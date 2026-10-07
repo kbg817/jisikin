@@ -163,7 +163,39 @@ def run_diagnostics(
             lines.append(f"[{'OK' if calc_ok else '오류'}] 명연당 계산 ({', '.join(calc_products)} 초안): {calc_msg}")
         else:
             lines.append(f"[--] 명연당 계산 ({', '.join(calc_products)} 초안): {calc_status()[1]}")
+    lines += _kin_rank_check(client, store)
     return ok, lines
+
+
+def _kin_rank_check(client, store) -> list[str]:
+    """[작업 결과] 답변 순위: 답변완료한 지식iN 글 하나를 열어 답변 칸·좋아요를 읽을 수 있는지 (실패해도 전체 점검은 OK)."""
+    from bs4 import BeautifulSoup
+
+    from .tracker import _answer_items, _likes, kin_answer_position
+
+    item = next((i for i in (store.answered_items() if store else []) if i["platform"] == "kin" and (i.get("draft") or "").strip()), None)
+    if item is None:
+        return ["[--] 지식iN 답변 순위: 답변완료한 지식iN 글이 없어 확인하지 않음"]
+    try:
+        html = client._get_html(item["url"])
+    except NaverError as e:
+        return [f"[??] 지식iN 답변 순위: 질문 페이지를 못 열었습니다 ({e})"]
+    soup = BeautifulSoup(html, "html.parser")
+    items = _answer_items(soup)
+    likes = [_likes(e) for e in items]
+    pos = kin_answer_position(html, item["draft"])
+    good = bool(pos.get("rank")) and any(n is not None for n in likes)
+    out = [
+        f"[{'OK' if good else '??'}] 지식iN 답변 순위 '{item['title'][:25]}': 답변 칸 {len(items)}개, "
+        f"좋아요 읽음 {sum(n is not None for n in likes)}개 {likes[:8]}, "
+        f"내 답변 {str(pos.get('rank')) + '번째' if pos.get('rank') else '못 찾음'}"
+    ]
+    if not good:
+        out += _page_debug(client, "답변 순위", {
+            "답변 칸": r"answer-content__item|_answer\b|answerDetail",
+            "좋아요": r"좋아요|추천|공감|recommend|like|sympathy",
+        })
+    return out
 
 
 # 'captcha' 같은 영어 단어는 정상 검색 화면의 스크립트에도 들어 있어서, 차단 화면에만 나오는 문구로 판단한다

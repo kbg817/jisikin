@@ -183,8 +183,10 @@ CREATE TABLE IF NOT EXISTS answer_checks (
     item_id     TEXT NOT NULL,                 -- 지식iN docId / yt:<영상 id>
     checked_at  TEXT NOT NULL,
     state       TEXT NOT NULL,                 -- visible / missing / gone / comments_off / no_text / error
-    rank        INTEGER,                       -- (유튜브) 인기 댓글 중 순위
-    likes       INTEGER,                       -- (유튜브) 내 댓글 좋아요
+    rank        INTEGER,                       -- (유튜브) 인기 댓글 중 순위 / (지식iN) 답변 중 몇 번째
+    likes       INTEGER,                       -- 내 댓글·답변 좋아요
+    total       INTEGER,                       -- (지식iN) 전체 답변 수
+    top_likes   INTEGER,                       -- (지식iN) 다른 답변 중 가장 많은 좋아요
     replies     INTEGER,                       -- (유튜브) 내 댓글에 달린 답글
     adopted     INTEGER,                       -- (지식iN) 채택되면 1
     note        TEXT NOT NULL DEFAULT ''
@@ -1184,12 +1186,13 @@ class Store:
     def add_answer_check(
         self, item_id: str, state: str, rank: int | None = None, likes: int | None = None, replies: int | None = None,
         adopted: bool | None = None, note: str = "", now: datetime | None = None,
+        total: int | None = None, top_likes: int | None = None,
     ) -> None:
         with self._conn() as c:
             c.execute(
-                """INSERT INTO answer_checks (item_id, checked_at, state, rank, likes, replies, adopted, note)
-                   VALUES (?,?,?,?,?,?,?,?)""",
-                (item_id, iso(now or now_kst()), state, rank, likes, replies, _bool_int(adopted), note[:300]),
+                """INSERT INTO answer_checks (item_id, checked_at, state, rank, likes, replies, adopted, note, total, top_likes)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (item_id, iso(now or now_kst()), state, rank, likes, replies, _bool_int(adopted), note[:300], total, top_likes),
             )
 
     def latest_answer_checks(self) -> dict[str, dict]:
@@ -1200,6 +1203,7 @@ class Store:
                 d = dict(r)
                 cur = out.get(d["item_id"])
                 d["prev_state"] = cur["state"] if cur else None
+                d["prev_rank"] = cur["rank"] if cur else None  # 지난 확인 때 순위 (밀렸는지 보려고)
                 d["first_checked_at"] = cur["first_checked_at"] if cur else d["checked_at"]
                 d["visible_days"] = (cur["visible_days"] if cur else 0) + (d["state"] == "visible")
                 out[d["item_id"]] = d
@@ -1298,6 +1302,10 @@ def _migrate(c: sqlite3.Connection) -> None:
     if ex_cols and "channel" not in ex_cols:
         c.execute("ALTER TABLE answer_examples ADD COLUMN channel TEXT NOT NULL DEFAULT 'kin'")
         c.execute("DROP INDEX IF EXISTS idx_ex_product")
+    check_cols = {r[1] for r in c.execute("PRAGMA table_info(answer_checks)")}
+    if check_cols and "total" not in check_cols:
+        c.execute("ALTER TABLE answer_checks ADD COLUMN total INTEGER")
+        c.execute("ALTER TABLE answer_checks ADD COLUMN top_likes INTEGER")
     social_cols = {r[1] for r in c.execute("PRAGMA table_info(social_posts)")}
     if social_cols and "is_short" not in social_cols:
         c.execute("ALTER TABLE social_posts ADD COLUMN duration INTEGER")
