@@ -377,6 +377,51 @@ def _cafe_more(text: str, example_text: str) -> str | None:
     return None if new == text else new
 
 
+_MYEONGUN_NEW_KEYWORDS = [
+    "신생아 작명", "이름 작명", "인터넷 작명", "출산택일", "제왕 날짜", "남자 이름", "여자 이름",
+    '"re:이름.{0,8}(지어|짓|추천|봐|괜찮|어떤가|어때|좋은지|골라)"',
+    '"re:(아기|아이|아들|딸|남아|여아|신생아|쌍둥이|첫째|둘째|셋째|손주|손자|손녀)\\\\s*이름"',
+]
+_MYEONGUN_TAEIL = (
+    "      - name: 출산택일\n"
+    "        keywords: [출산택일, 출산 택일, 제왕절개 날짜, 제왕절개 택일, 제왕 날짜, 수술 날짜, 출산 날짜, 택일]\n"
+    "        search: [제왕절개 날짜]\n"
+)
+_MYEONGUN_GUIDE_OLD = "      개명 질문이면 법원 개명 허가 신청 절차를 간단히 안내합니다.\n"
+_MYEONGUN_GUIDE_NEW = _MYEONGUN_GUIDE_OLD + "      출산택일(제왕절개 날짜) 질문이면 아기 사주가 좋게 나오는 날짜를 고르는 기준을 짧게 설명합니다.\n"
+
+
+def _myeongun_more(text: str, example_text: str) -> str | None:
+    """명운연구소 지식iN 수집 늘리기: 검색어(신생아 작명·출산택일·남자/여자 이름 등)와 자연스러운 문장 패턴 추가,
+    출산택일 카테고리, 답변 가이드 한 줄. 이미 있는 것은 그대로 두고 빠진 것만 더한다."""
+    parts = split_products(text)
+    if parts is None:
+        return None
+    head, blocks, tail = parts
+    out = []
+    for pid, block in blocks:
+        if pid == "myeongun":
+            m = re.search(r"^    keywords: \[(.*?)\]\n", block, re.M | re.S)
+            if m:
+                raw = m.group(1)
+                have = {k.strip().strip('"').strip("'").replace(" ", "") for k in re.split(r",\s*", raw.replace("\n", " "))}
+                # 정규식(re:)은 안에 쉼표가 있어 통째로 찾는다
+                add = [k for k in _MYEONGUN_NEW_KEYWORDS
+                       if (k not in raw if k.startswith('"re:') else k.replace(" ", "") not in have)]
+                if add:
+                    new_list = raw.rstrip() + ",\n               " + ", ".join(add)
+                    block = block[: m.start(1)] + new_list + block[m.end(1) :]
+            if not re.search(r"^      - name: 출산택일\s*$", block, re.M):
+                w = re.search(r"^    watch_urls:", block, re.M) or re.search(r"^    exposure:", block, re.M)
+                if w and re.search(r"^    categories:", block, re.M):
+                    block = block[: w.start()] + _MYEONGUN_TAEIL + block[w.start() :]
+            if _MYEONGUN_GUIDE_OLD in block and _MYEONGUN_GUIDE_NEW not in block:
+                block = block.replace(_MYEONGUN_GUIDE_OLD, _MYEONGUN_GUIDE_NEW, 1)
+        out.append((pid, block))
+    new = join_products(head, out, tail)
+    return None if new == text else new
+
+
 # 설정 파일과 함께 DB 에 저장된 값도 한 번 고친다 (키: 설정 업데이트 키)
 STORE_MIGRATIONS: dict[str, Callable[[Store], None]] = {"2026-10-sinui-split": _sinui_seeds}
 
@@ -399,6 +444,7 @@ MIGRATIONS: list[tuple[str, str, Callable[[str, str], str | None]]] = [
     ("2026-10-sinui-kin-tone-2", "신의소리 지식iN 지침 추가 (호칭·어색한 표현)", _sinui_kin_guide_v4),
     ("2026-10-cafe-more", "신의소리·명연당 카페 검색어 추가, 카페 검색어당 글 100개", _cafe_more),
     ("2026-10-calc-tools", "명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀", _calc_tools),
+    ("2026-10-myeongun-more", "명운연구소 지식iN 검색어·문장 패턴·출산택일 추가", _myeongun_more),
 ]
 
 

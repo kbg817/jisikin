@@ -102,7 +102,7 @@ class Product:
         return _dedupe(self.cafe.keywords)
 
     def search_queries(self) -> list[str]:
-        queries = list(self.keywords)
+        queries = [k for k in self.keywords if not k.startswith("re:")]  # 정규식 키워드는 분류에만 (검색어로 보내지 않음)
         for cat in self.categories:
             queries.extend(cat.search)
         return _dedupe(queries)

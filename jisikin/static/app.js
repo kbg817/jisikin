@@ -163,7 +163,7 @@ async function loadMeta() {
   renderResultsBar();
   if (wasRunning && !meta.running) loadList();
   wasRunning = meta.running;
-  const newTotal = Object.values(meta.counts.products).reduce((a, p) => a + p.new, 0);
+  const newTotal = meta.counts.all ? meta.counts.all.new : Object.values(meta.counts.products).reduce((a, p) => a + p.new, 0);
   document.title = (newTotal ? `(${newTotal}) ` : "") + "답변·댓글 센터";
 }
 
@@ -191,7 +191,7 @@ function renderViews() {
 function renderGroupCounts() {
   const sum = (counts) => Object.values(counts || {}).reduce((a, p) => a + p.total, 0);
   const n = {
-    kin: sum(meta.counts.products), youtube: sum(meta.social.counts.youtube),
+    kin: meta.counts.all ? meta.counts.all.total : sum(meta.counts.products), youtube: sum(meta.social.counts.youtube),
     threads: sum(meta.social.counts.threads), cafe: sum(meta.social.counts.cafe),
   };
   for (const [k, v] of Object.entries(n)) {
@@ -370,7 +370,9 @@ function renderSegCounts() {
 function renderTabs() {
   if (meta) renderSegCounts();
   const counts = state.view === "results" ? resultCounts() : state.view === "exposure" ? exposureCounts() : isSocial() ? (meta.social.counts[state.view] || {}) : meta.counts.products;
-  const all = Object.values(counts).reduce((a, p) => ({ total: a.total + p.total, new: a.new + p.new }), { total: 0, new: 0 });
+  const all = counts === meta.counts.products && meta.counts.all
+    ? meta.counts.all  // 여러 제품에 걸린 질문을 두 번 세지 않게
+    : Object.values(counts).reduce((a, p) => ({ total: a.total + p.total, new: a.new + p.new }), { total: 0, new: 0 });
   const tabs = [{ id: "", name: "전체", color: "", c: all }]
     .concat(meta.products.map((p) => ({ ...p, c: counts[p.id] || { total: 0, new: 0 } })));
   $("#tabs").innerHTML = tabs.map((t) => `
@@ -605,8 +607,10 @@ function renderList(items) {
 }
 
 function cardHtml(q) {
-  const p = productById(q.product);
-  const bestMatch = (q.matches || []).find((m) => m.product_id === q.product) || (q.matches || [])[0] || {};
+  // 제품 탭에서 볼 때는 그 제품 기준으로 (1순위가 다른 제품이어도 이 제품에 관련으로 걸린 질문)
+  const tabMatch = state.product ? (q.matches || []).find((m) => m.product_id === state.product && m.relevant) : null;
+  const p = tabMatch ? productById(state.product) : productById(q.product);
+  const bestMatch = tabMatch || (q.matches || []).find((m) => m.product_id === q.product) || (q.matches || [])[0] || {};
   const terms = (q.matches || []).flatMap((m) => m.terms || []);
   const low = !q.product;
   const lowProduct = low ? productById(bestMatch.product_id) : null;
@@ -617,8 +621,8 @@ function cardHtml(q) {
   const ansBadge = answerBadge(q);
   const time = q.asked_at ? `작성 ${relTime(q.asked_at)}` : `수집 ${relTime(q.first_seen)}`;
   const snippet = q.body || q.snippet || "";
-  const cats = (q.categories || []).length ? q.categories : (bestMatch.categories || []);
-  const others = (q.matches || []).filter((m) => m.relevant && m.product_id !== q.product)
+  const cats = tabMatch ? (tabMatch.categories || []) : (q.categories || []).length ? q.categories : (bestMatch.categories || []);
+  const others = (q.matches || []).filter((m) => m.relevant && m.product_id !== (p ? p.id : q.product))
     .map((m) => productById(m.product_id)?.name).filter(Boolean);
 
   return `
@@ -1014,7 +1018,8 @@ async function draft(card, btn, regen) {
   btn.disabled = true;
   btn.textContent = "작성 중…";
   try {
-    const data = await api(itemPath(card, "/draft"), {});
+    // 질문이 여러 제품에 걸려 있으면 지금 보고 있는 제품 탭 기준으로 초안을 쓴다
+    const data = await api(itemPath(card, "/draft"), card.dataset.kind === "social" ? {} : { product: state.product || "" });
     ta.value = data.draft;
     const slot = box.querySelector(".calc-slot");
     if (slot) slot.innerHTML = calcBoxHtml(data.calc);

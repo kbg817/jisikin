@@ -238,8 +238,9 @@ def test_calc_tools_added_to_myeongyeon_and_myeongun(tmp_path):
     store = Store(":memory:")
     from jisikin.migrations import MIGRATIONS
 
-    for key, _, _ in MIGRATIONS[:-1]:
-        store.kv_set(f"migration:{key}", "done")  # 서버에서 이미 한 업데이트
+    for key, _, _ in MIGRATIONS:
+        if key != "2026-10-calc-tools":
+            store.kv_set(f"migration:{key}", "done")  # 서버에서 이미 한 업데이트
     assert migrate_config(path, store) == ["명연당·명운연구소 AI 초안이 명연당 계산(만세력·이름 판정)을 씀"]
     assert load_config(path).product("myeongun").calc_tools == ["name", "hanja", "saju"]
 
@@ -304,3 +305,27 @@ def test_sinui_kin_tone_from_any_older_guide():
     assert "서비스 안내문처럼 쓰지 않는다" in sinui.kin_guide and "짚어볼 수" in sinui.kin_banned
     assert "상담받을 수 있다고 안내" not in sinui.answer_guide
     assert "호칭은 질문자가 쓴 말 그대로" in sinui.kin_guide and "그녀" in sinui.kin_banned
+
+
+def test_myeongun_more_keywords_category_guide():
+    """명운연구소 수집 늘리기: 빠진 검색어·패턴·출산택일만 더하고, 직접 고친 문장은 그대로."""
+    from jisikin.matcher import Matcher
+    from jisikin.migrations import _MYEONGUN_GUIDE_NEW, _MYEONGUN_GUIDE_OLD, _MYEONGUN_TAEIL, _myeongun_more
+
+    example = EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8")
+    import re
+
+    before = "    keywords: [작명, 작명소, 개명, 아기 이름, 신생아 이름, 이름 짓기, 이름 지어, 이름 풀이, 이름 추천, 성명학, 상호명 추천, 가게 이름 추천]\n"
+    old = re.sub(r"^    keywords: \[작명, 작명소.*?\]\n", lambda m: before, example, count=1, flags=re.M | re.S)
+    old = old.replace(_MYEONGUN_TAEIL, "").replace(_MYEONGUN_GUIDE_NEW, _MYEONGUN_GUIDE_OLD)
+    assert "출산택일" not in parse_config(old).product("myeongun").keywords
+    new = _myeongun_more(old, example)
+    assert new == example and _myeongun_more(new, example) is None
+    cfg = parse_config(new)
+    p = cfg.product("myeongun")
+    assert "출산택일" in [c.name for c in p.categories] and "출산택일" in p.search_queries()
+    assert not any(q.startswith("re:") for q in p.search_queries())  # 정규식은 검색어로 안 보냄
+    m = Matcher(cfg.products)
+    for title in ["남자아이 이름 좀 지어주세요", "제왕절개 날짜 잡으려는데요", "여자이름 추천 부탁"]:
+        assert Matcher.best(m.classify(title)) is not None and any(
+            x.product_id == "myeongun" and x.relevant for x in m.classify(title)), title
