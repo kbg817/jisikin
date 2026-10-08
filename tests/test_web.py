@@ -164,3 +164,38 @@ def test_exposure_check_runs_right_after_new_keywords(tmp_path, monkeypatch):
     state._tick()
     assert ran == ["collect", "keywords:sinui", "keywords:myeongyeon", "keywords:myeongun", "keywords:daksaren", "keywords:eumpa",
                    "keywords:chidifit", "keywords:safemom", "exposure"]
+
+
+def test_secondary_product_questions_show_in_that_tab(tmp_path, monkeypatch):
+    """사주+이름 질문: 1순위는 명연당이어도 명운연구소 탭·개수에 나오고, 그 탭에서 쓴 초안은 명운연구소 기준."""
+    import shutil
+
+    from jisikin import web
+    from jisikin.config import EXAMPLE_CONFIG_PATH
+    from jisikin.matcher import Matcher
+    from jisikin.naver import RawQuestion
+    from jisikin.web import AppState, create_app
+
+    cfg_path = tmp_path / "config.yaml"
+    shutil.copyfile(EXAMPLE_CONFIG_PATH, cfg_path)
+    state = AppState(cfg_path, tmp_path / "db.sqlite", env_path=tmp_path / ".env")
+    state.store.upsert_raw(RawQuestion(doc_id="9", url="https://kin.naver.com/qna/detail.naver?docId=9",
+                                       title="사주풀이 운세 궁합 대운 봐주세요 작명도 궁금"), "검색:t")
+    state.store.classify(Matcher(state.cfg.products))
+    q = state.store.get("9")
+    assert q["product"] == "myeongyeon"
+    assert any(m["product_id"] == "myeongun" and m["relevant"] for m in q["matches"])
+    client = create_app(state).test_client()
+    ids = lambda pid: [i["doc_id"] for i in client.get(f"/api/questions?product={pid}&status=todo").get_json()["items"]]
+    assert ids("myeongun") == ["9"] and ids("myeongyeon") == ["9"]
+    counts = client.get("/api/meta").get_json()["counts"]
+    assert counts["products"]["myeongun"]["total"] == 1 and counts["products"]["myeongyeon"]["total"] == 1
+    assert counts["all"]["total"] == 1  # 전체에는 한 번만
+
+    used = []
+    monkeypatch.setattr(web, "generate_draft_with_calc", lambda cfg, product, q, store=None: used.append(product.id) or ("초안", None))
+    H = {"X-Jisikin": "1"}
+    client.post("/api/questions/9/draft", json={"product": "myeongun"}, headers=H)
+    client.post("/api/questions/9/draft", json={}, headers=H)
+    client.post("/api/questions/9/draft", json={"product": "daksaren"}, headers=H)  # 관련 없는 제품이면 무시
+    assert used == ["myeongun", "myeongyeon", "myeongyeon"]

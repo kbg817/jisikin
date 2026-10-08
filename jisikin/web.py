@@ -637,6 +637,9 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         if not q:
             return jsonify(error="질문을 찾을 수 없습니다"), 404
         product = question_product(q)
+        wanted = state.cfg.product(str((request.get_json(silent=True) or {}).get("product") or ""))
+        if wanted and any(m.get("product_id") == wanted.id and m.get("relevant") for m in q.get("matches") or []):
+            product = wanted  # 제품 탭에서 연 질문이면 그 제품 기준으로 (예: 명연당 1순위 질문을 명운연구소 탭에서)
         if product is None:
             return jsonify(error="어느 제품과 관련된 질문인지 알 수 없습니다"), 400
         try:

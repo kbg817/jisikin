@@ -747,8 +747,11 @@ class Store:
                 where.append("(product=? OR matches LIKE ?)")
                 args += [product, f'%"product_id": "{product}"%']
             else:
-                where.append("product=?")
-                args.append(product)
+                # 1순위 제품이 아니어도 이 제품에 '관련'으로 걸린 질문은 함께 보여준다
+                # (예: 사주+이름 질문은 명연당이 1순위지만 명운연구소 탭에도 나와야 함)
+                where.append("(product=? OR EXISTS (SELECT 1 FROM json_each(questions.matches) j "
+                             "WHERE json_extract(j.value, '$.product_id')=? AND json_extract(j.value, '$.relevant')=1))")
+                args += [product, product]
         elif include_low:
             where.append("(product IS NOT NULL OR score > 0)")  # 점수 0 (완전 무관) 은 제외
         else:
@@ -787,7 +790,7 @@ class Store:
         """제품별 / 카테고리별 할 일 개수."""
         now = now or now_kst()
         sql = (
-            "SELECT product, categories, status FROM questions "
+            "SELECT product, categories, matches, status FROM questions "
             "WHERE product IS NOT NULL AND in_feed=1 AND status IN ('new','opened')"
         )
         args: list = []
@@ -795,19 +798,31 @@ class Store:
             sql += " AND (asked_at IS NULL OR asked_at >= ?)"
             args.append(iso(now - timedelta(days=max_age_days)))
         products: dict[str, dict] = {}
+        total = {"total": 0, "new": 0}  # 전체 (한 질문이 여러 제품에 걸려도 한 번)
         with self._conn() as c:
             for r in c.execute(sql, args):
-                p = products.setdefault(r["product"], {"total": 0, "new": 0, "categories": {}})
-                p["total"] += 1
-                if r["status"] == "new":
-                    p["new"] += 1
-                for cat in json.loads(r["categories"] or "[]"):
-                    p["categories"][cat] = p["categories"].get(cat, 0) + 1
+                total["total"] += 1
+                total["new"] += r["status"] == "new"
+                # 1순위 제품 + '관련'으로 함께 걸린 제품 모두에 센다 (목록과 같게)
+                per = {r["product"]: json.loads(r["categories"] or "[]")}
+                try:
+                    for m in json.loads(r["matches"] or "[]"):
+                        if m.get("relevant") and m.get("product_id") not in per:
+                            per[m["product_id"]] = m.get("categories") or []
+                except (ValueError, AttributeError):
+                    pass
+                for pid, cats in per.items():
+                    p = products.setdefault(pid, {"total": 0, "new": 0, "categories": {}})
+                    p["total"] += 1
+                    if r["status"] == "new":
+                        p["new"] += 1
+                    for cat in cats:
+                        p["categories"][cat] = p["categories"].get(cat, 0) + 1
             answered_today = c.execute(
                 "SELECT COUNT(*) FROM questions WHERE status='answered' AND status_changed_at >= ?",
                 (iso(now.replace(hour=0, minute=0, second=0, microsecond=0)),),
             ).fetchone()[0]
-        return {"products": products, "answered_today": answered_today}
+        return {"products": products, "all": total, "answered_today": answered_today}
 
     # ------------------------------------------------------------ 수집 기록
 
