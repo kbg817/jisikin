@@ -412,7 +412,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         if not link.bearer_ok(request.headers.get("Authorization")):
             abort(404)
         cfg = state.cfg
-        kin = state.store.todo_counts(cfg.settings.max_age_days)["products"]
+        todo = state.store.todo_counts(cfg.settings.max_age_days)
+        kin_all = todo.get("all") or {"total": 0, "new": 0}  # 여러 제품에 걸린 질문을 두 번 세지 않게
         social = state.store.social_counts({pf: cfg.settings.social_age_days(pf) for pf in ("youtube", "threads", "cafe")})
         stats = state.store.answer_stats()
         names = people()
@@ -420,8 +421,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         return jsonify(
             title="답변·댓글 센터",
             counts=[
-                {"label": "답변할 지식iN 질문", "value": total(kin)},
-                {"label": "아직 안 연 질문", "value": sum(p["new"] for p in kin.values())},
+                {"label": "답변할 지식iN 질문", "value": kin_all["total"]},
+                {"label": "아직 안 연 질문", "value": kin_all["new"]},
                 {"label": "유튜브 댓글 거리", "value": total(social.get("youtube", {}))},
                 {"label": "쓰레드 댓글 거리", "value": total(social.get("threads", {}))},
                 {"label": "카페 댓글 거리", "value": total(social.get("cafe", {}))},
