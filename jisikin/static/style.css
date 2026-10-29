@@ -336,6 +336,8 @@ header.top form.me { display: flex; align-items: center; gap: 8px; margin: 0; fo
 .kw-head2 h2 { margin: 0; }
 .kw-add { display: flex; gap: 6px; }
 .kw-add input { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--bg); }
+.kw-add.hanja { flex-wrap: wrap; max-width: 100%; }
+.kw-add.hanja input { flex: 1 1 220px; min-width: 0; }
 .kw-table tr.off td { color: var(--muted); }
 .kw-table tr.off a { text-decoration: line-through; }
 .kw-table td { vertical-align: middle; }

@@ -53,7 +53,11 @@ def test_all_good(example_cfg):
     first_kw = targets[0][1]
     second_kw = next(kw for p, kw in targets if p.id != targets[0][0].id)  # 다른 제품의 첫 검색어
     assert f"상위노출 '{first_kw}' 통합검색 PC: 지식iN 글 1개" in text
-    assert client.integrated_calls == [(first_kw, "pc"), (first_kw, "mobile"), (second_kw, "pc"), (second_kw, "mobile")]
+    assert client.integrated_calls == [
+        (first_kw, "pc"), (first_kw, "mobile"), (second_kw, "pc"), (second_kw, "mobile"),
+        ("이슬빛날 현", "mobile"), ("이슬빛날 현", "pc"),  # 명운연구소 한자 검색어 (calc_tools 에 hanja)
+    ]
+    assert "[OK] 한자 검색어 '이슬빛날 현' 통합검색 모바일: 지식iN 글 1개" in text
     assert "[OK] 네이버 자동완성 '신점': 3개" in text
     assert "[--] 검색광고 API: 키 없음" in text
 

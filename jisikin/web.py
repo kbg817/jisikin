@@ -21,9 +21,10 @@ from . import config as config_mod
 from .collector import collect, effective_interval, estimate_api_calls_per_day, resolve_mode
 from .config import AppConfig, ConfigError
 from .diagnose import run_diagnostics
-from .calc import calc_status
+from .calc import CalcUnavailable, calc_status
 from .drafter import MAX_EXAMPLES, USAGE_KINDS, DraftError, ai_status, generate_draft_with_calc, generate_social_draft, monthly_usage
 from .exposure import all_targets, check_exposure
+from . import hanja as hanja_mod
 from .keywords import SOURCE_LABELS, due_products, ensure_default_seeds, generate_for_product, save_seed_settings, seed_settings
 from .matcher import Matcher
 from .migrations import migrate_config
@@ -162,7 +163,8 @@ class AppState:
 
     def exposure_interval_hours(self) -> int:
         h = self.cfg.settings.exposure_interval_hours
-        return h if h > 0 and self.exposure_targets() else 0
+        has_hanja = self.cfg.settings.hanja_per_run > 0 and self.store.hanja_count() > 0
+        return h if h > 0 and (self.exposure_targets() or has_hanja) else 0
 
     def trigger(self, kind: str = "collect", product: str | None = None, then_exposure: bool = False) -> bool:
         """지금 실행. 다른 작업이 진행 중이면 끝난 뒤 이어서 실행한다."""
@@ -556,6 +558,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             },
             exposure={
                 "keywords": len(state.exposure_targets()),
+                "hanja": state.store.hanja_count() if cfg.settings.hanja_per_run > 0 else 0,
+                "hanja_per_run": cfg.settings.hanja_per_run,
                 "interval_hours": state.exposure_interval_hours(),
                 "next_at": iso(state.next_exposure_at),
                 "last_run": exp_runs[0] if exp_runs else None,
@@ -639,7 +643,10 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             return jsonify(error="질문을 찾을 수 없습니다"), 404
         product = question_product(q)
         wanted = state.cfg.product(str((request.get_json(silent=True) or {}).get("product") or ""))
-        if wanted and any(m.get("product_id") == wanted.id and m.get("relevant") for m in q.get("matches") or []):
+        if wanted and (
+            any(m.get("product_id") == wanted.id and m.get("relevant") for m in q.get("matches") or [])
+            or state.store.exposure_product(doc_id) == wanted.id  # 그 제품 검색어(예: 한자 검색어)로 찾은 상위노출 글
+        ):
             product = wanted  # 제품 탭에서 연 질문이면 그 제품 기준으로 (예: 명연당 1순위 질문을 명운연구소 탭에서)
         if product is None:
             return jsonify(error="어느 제품과 관련된 질문인지 알 수 없습니다"), 400
@@ -672,6 +679,9 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
         a = request.args
         groups = state.store.latest_exposures(product=a.get("product") or None)
         order = {(p.id, compact(kw)): i for i, (p, kw) in enumerate(state.exposure_targets())}
+        hanja = {(r["product"], compact(r["keyword"])) for r in state.store.hanja_keywords()}
+        for key in hanja:
+            order.setdefault(key, len(order))  # 한자 검색어는 일반 검색어 뒤에
         keep = (
             "doc_id url title snippet body answer_count reward asked_at views views_per_day views_per_day_kind "
             "status status_by draft ranks prev_ranks best_rank categories matches detail_fetched_at first_seen"
@@ -682,6 +692,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             if key not in order:
                 continue  # 설정/검색어 관리에서 지우거나 끈 검색어
             posts = g_["posts"]
+            if key in hanja and not posts:
+                continue  # 한자 검색어는 수백 개라 노출 글이 있는 것만
             if a.get("unanswered") == "1":
                 posts = [p for p in posts if p["status"] in TODO_STATUSES]
             items = []
@@ -690,7 +702,10 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                 item["body"] = (p.get("body") or "")[:300]
                 item["product"] = g_["product"]
                 items.append(item)
-            out.append({**{k: g_[k] for k in ("product", "keyword", "checked_at", "sources")}, "posts": items, "_order": order[key]})
+            out.append({
+                **{k: g_[k] for k in ("product", "keyword", "checked_at", "sources")},
+                "posts": items, "hanja": key in hanja, "_order": order[key],
+            })
         # 노출 글이 있는 검색어 먼저 (설정 순서 유지), 노출 글이 없는 검색어는 아래로
         out.sort(key=lambda x: (not x["posts"], x.pop("_order")))
         return jsonify(groups=out)
@@ -698,7 +713,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     @app.post("/api/exposure/check")
     def api_exposure_check():
         require_api_header()
-        if not state.exposure_targets():
+        if not state.exposure_targets() and not state.store.hanja_count():
             return jsonify(error="확인할 검색어가 없습니다. [검색어 관리]에서 메인 키워드를 넣어주세요"), 400
         return jsonify(started=state.trigger("exposure"))
 
@@ -843,6 +858,17 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
     def keywords_page():
         return render_template("keywords.html")
 
+    def hanja_summary(product_id: str) -> list[dict]:
+        """음별로 묶은 한자 검색어: [{eum, total, checked, live: [{keyword, hanja, found}]}]."""
+        by_eum: dict[str, dict] = {}
+        for r in state.store.hanja_keywords(product_id):
+            e = by_eum.setdefault(r["eum"], {"eum": r["eum"], "total": 0, "checked": 0, "live": []})
+            e["total"] += 1
+            e["checked"] += r["checked_at"] is not None
+            if r["found"]:
+                e["live"].append({"keyword": r["keyword"], "hanja": r["hanja"], "found": r["found"]})
+        return list(by_eum.values())
+
     @app.get("/api/keywords")
     @admin_required
     def api_keywords():
@@ -863,6 +889,8 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
                     "generated_at": s["generated_at"],
                     "last_error": s["last_error"],
                     "used": [SOURCE_LABELS.get(x, x) for x in s["used"]],
+                    "hanja_enabled": "hanja" in p.calc_tools,
+                    "hanja": hanja_summary(p.id),
                     "config_keywords": [
                         {"keyword": kw, "exposure": exposure.get((p.id, kw))} for kw in p.exposure.queries()
                     ],
@@ -889,6 +917,7 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             },
             total_enabled=len(state.exposure_targets()),
             exposure_hours=state.cfg.settings.exposure_interval_hours,
+            hanja_per_run=state.cfg.settings.hanja_per_run,
         )
 
     @app.post("/api/keywords/seeds")
@@ -942,6 +971,39 @@ def create_app(state: AppState, behind_proxy: bool = False) -> Flask:
             return jsonify(error="검색어를 확인해 주세요 (40자 이내)"), 400
         state.store.set_auto_keyword(pid, kw, True, sources=["manual"])
         return jsonify(ok=True)
+
+    @app.post("/api/keywords/hanja/add")
+    @admin_required
+    def api_hanja_add():
+        """'현, 서' 처럼 음을 넣으면 인명용 한자 뜻을 붙여 '이슬 빛날 현' … 검색어로. '이슬 빛날 현' 처럼 직접 넣어도 됨."""
+        require_api_header()
+        data = request.get_json(silent=True) or {}
+        product = state.cfg.product(data.get("product"))
+        if product is None:
+            return jsonify(error="제품을 찾을 수 없습니다"), 404
+        eums, phrases, bad = hanja_mod.parse_input(str(data.get("text") or ""))
+        if not eums and not phrases:
+            return jsonify(error="음(예: 현, 서) 이나 '이슬 빛날 현' 처럼 넣어주세요"), 400
+        if len(eums) > hanja_mod.MAX_EUM_PER_REQUEST:
+            return jsonify(error=f"한 번에 음 {hanja_mod.MAX_EUM_PER_REQUEST}개까지 넣을 수 있어요"), 400
+        try:
+            rows, errors = hanja_mod.expand(eums)
+        except CalcUnavailable as e:
+            return jsonify(error=f"한자 사전(명연당 계산 서버)에 연결하지 못했어요: {e}"), 400
+        added = state.store.add_hanja_keywords(product.id, rows + phrases)
+        errors += [f"'{b}': 음 한 글자(현) 또는 '뜻 음'(이슬 빛날 현)으로 넣어주세요" for b in bad]
+        return jsonify(ok=True, added=added, total=len(rows) + len(phrases), errors=errors)
+
+    @app.post("/api/keywords/hanja/delete")
+    @admin_required
+    def api_hanja_delete():
+        require_api_header()
+        data = request.get_json(silent=True) or {}
+        product = state.cfg.product(data.get("product"))
+        if product is None:
+            return jsonify(error="제품을 찾을 수 없습니다"), 404
+        removed = state.store.delete_hanja_keywords(product.id, str(data.get("eum") or "") or None)
+        return jsonify(ok=True, removed=removed)
 
     # ------------------------------------------------------------ 답변 예시 (관리자)
 

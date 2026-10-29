@@ -258,11 +258,11 @@ function renderExposureBar() {
   else if (x.last_run) parts.push(`마지막 확인 ${relTime(x.last_run.finished_at || x.last_run.started_at)}`);
   else parts.push("아직 확인해 본 적이 없어요");
   if (x.interval_hours) parts.push(`${x.interval_hours}시간마다 자동 확인${x.next_at && !meta.running ? ` (다음 ${untilTime(x.next_at)})` : ""}`);
-  parts.push(`검색어 ${x.keywords}개`);
+  parts.push(`검색어 ${x.keywords}개${x.hanja ? ` + 한자 검색어 ${num(x.hanja)}개 (한 번에 ${x.hanja_per_run}개씩 돌아가며)` : ""}`);
   $("#exp-status").innerHTML = parts.join(" · ");
   const btn = $("#exp-check-btn");
   const checking = meta.running && meta.running_kind === "exposure";
-  btn.disabled = checking || !x.keywords;
+  btn.disabled = checking || !(x.keywords || x.hanja);
   btn.textContent = checking ? "확인 중…" : "지금 확인";
 }
 
@@ -917,7 +917,7 @@ function exposureCardHtml(q) {
 
 function renderExposure(groups) {
   const list = $("#list");
-  if (!meta.exposure.keywords) {
+  if (!meta.exposure.keywords && !meta.exposure.hanja) {
     const how = meta.user.role === "admin"
       ? '<a href="/keywords">검색어 관리</a>에서 메인 키워드(예: 건선)를 넣어주세요.'
       : "관리자에게 메인 키워드 등록을 요청하세요.";
@@ -953,6 +953,7 @@ function renderExposure(groups) {
       <header class="kw-head">
         <h3><a href="https://search.naver.com/search.naver?query=${encodeURIComponent(g.keyword)}" target="_blank" rel="noopener" title="네이버에서 직접 검색해 보기">${esc(g.keyword)}</a></h3>
         ${p && !state.product ? `<span class="badge product">${esc(p.name)}</span>` : ""}
+        ${g.hanja ? '<span class="badge" title="[검색어 관리] > 한자 검색어 (통합검색에서 돌아가며 확인)">한자</span>' : ""}
         <span class="muted">확인 ${relTime(g.checked_at)}</span>
         <span class="srcs">${srcs}</span>
       </header>
