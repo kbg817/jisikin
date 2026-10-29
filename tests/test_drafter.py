@@ -162,17 +162,20 @@ def test_long_draft_is_shortened(example_cfg, monkeypatch):
 def test_sinui_kin_guide_and_recent_drafts(example_cfg, monkeypatch):
     from jisikin import drafter
     from jisikin.drafter import build_social_prompt
-    from jisikin.storage import Store
+    from datetime import timedelta
+
+    from jisikin.storage import Store, iso, now_kst
 
     sinui = example_cfg.product("sinui")
     assert "질문에 먼저 반응하고 추천을 이어간다" in sinui.kin_guide and not example_cfg.product("myeongyeon").kin_guide
     store = Store(":memory:")
+    day = now_kst() - timedelta(days=1)  # 최근 14일 안
     with store._conn() as c:
         for i, pid in enumerate(["sinui", "sinui", "myeongyeon"]):
             c.execute(
                 "INSERT INTO questions (doc_id, url, title, product, first_seen, last_seen, draft, draft_at) "
-                "VALUES (?, '', '', ?, '2026-10-05T00:00:00+09:00', '2026-10-05T00:00:00+09:00', ?, ?)",
-                (f"d{i}", pid, f"최근 답변 내용 {i}", f"2026-10-05T0{i}:00:00+09:00"),
+                "VALUES (?, '', '', ?, ?, ?, ?, ?)",
+                (f"d{i}", pid, iso(day), iso(day), f"최근 답변 내용 {i}", iso(day + timedelta(minutes=i))),
             )
     assert store.recent_drafts("sinui", 8, exclude="d1") == ["최근 답변 내용 0"]
 

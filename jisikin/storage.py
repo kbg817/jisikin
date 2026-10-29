@@ -126,6 +126,18 @@ CREATE TABLE IF NOT EXISTS auto_keywords (
     PRIMARY KEY (product, keyword)
 );
 
+-- 한자 검색어: 인명용 한자의 '뜻 + 음'(예: 이슬 빛날 현)을 통합검색에 돌아가며 검색해 상위노출 지식iN 글을 찾는다
+CREATE TABLE IF NOT EXISTS hanja_keywords (
+    product     TEXT NOT NULL,
+    keyword     TEXT NOT NULL,
+    eum         TEXT NOT NULL,
+    hanja       TEXT NOT NULL DEFAULT '',
+    found       INTEGER,                  -- 마지막 확인에서 찾은 지식iN 글 수 (NULL = 아직 확인 전)
+    checked_at  TEXT,
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (product, keyword)
+);
+
 -- AI 초안이 참고할 모범 답변 (관리자가 ⭐ 로 지정한 것만 사용)
 CREATE TABLE IF NOT EXISTS answer_examples (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -562,6 +574,78 @@ class Store:
                     (product, keyword, json.dumps(sources or ["직접"], ensure_ascii=False), int(enabled), now_s),
                 )
 
+    # ------------------------------------------------------------ 한자 검색어
+
+    def add_hanja_keywords(self, product: str, rows: list[dict], now: datetime | None = None) -> int:
+        """rows: [{keyword, eum, hanja}] → 새로 넣은 개수 (띄어쓰기만 다른 같은 검색어는 건너뜀)."""
+        now_s = iso(now or now_kst())
+        added = 0
+        with self._conn() as c:
+            have = {_compact(r[0]) for r in c.execute("SELECT keyword FROM hanja_keywords WHERE product=?", (product,))}
+            for r in rows:
+                key = _compact(r["keyword"])
+                if not key or key in have:
+                    continue
+                have.add(key)
+                c.execute(
+                    "INSERT INTO hanja_keywords (product, keyword, eum, hanja, created_at) VALUES (?,?,?,?,?)",
+                    (product, r["keyword"], r["eum"], r.get("hanja") or "", now_s),
+                )
+                added += 1
+        return added
+
+    def hanja_keywords(self, product: str | None = None) -> list[dict]:
+        sql, args = "SELECT * FROM hanja_keywords", []
+        if product:
+            sql += " WHERE product=?"
+            args.append(product)
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(sql + " ORDER BY product, rowid", args)]
+
+    def hanja_count(self) -> int:
+        with self._conn() as c:
+            return c.execute("SELECT COUNT(*) FROM hanja_keywords").fetchone()[0]
+
+    def delete_hanja_keywords(self, product: str, eum: str | None = None) -> int:
+        sql, args = "DELETE FROM hanja_keywords WHERE product=?", [product]
+        if eum:
+            sql += " AND eum=?"
+            args.append(eum)
+        with self._conn() as c:
+            return c.execute(sql, args).rowcount
+
+    def hanja_due(self, limit: int) -> list[dict]:
+        """이번 상위노출 확인에서 검색할 한자 검색어.
+
+        절반까지는 지식iN 글이 나왔던 검색어(오래 전에 확인한 것부터) — 노출 순위를 새로 고침,
+        나머지는 아직 확인 안 한 검색어 → 오래 전에 확인한 검색어 순 — 전체를 돌아가며 확인.
+        """
+        if limit <= 0:
+            return []
+        with self._conn() as c:
+            live = [dict(r) for r in c.execute(
+                "SELECT * FROM hanja_keywords WHERE found > 0 ORDER BY checked_at, rowid LIMIT ?", (limit // 2,)
+            )]
+            rest = [dict(r) for r in c.execute(
+                """SELECT * FROM hanja_keywords WHERE found IS NULL OR found = 0
+                   ORDER BY checked_at IS NOT NULL, checked_at, rowid LIMIT ?""",
+                (limit - len(live),),
+            )]
+            if len(live) + len(rest) < limit:  # 확인할 새 검색어가 모자라면 노출 검색어를 더
+                more = [dict(r) for r in c.execute(
+                    "SELECT * FROM hanja_keywords WHERE found > 0 ORDER BY checked_at, rowid LIMIT ? OFFSET ?",
+                    (limit - len(live) - len(rest), len(live)),
+                )]
+                live += more
+        return live + rest
+
+    def mark_hanja_checked(self, product: str, keyword: str, found: int, now: datetime | None = None) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE hanja_keywords SET found=?, checked_at=? WHERE product=? AND keyword=?",
+                (found, iso(now or now_kst()), product, keyword),
+            )
+
     def exposure_counts(self) -> dict[tuple[str, str], int]:
         """(제품, 검색어) → 최근 확인에서 노출된 지식iN 글 수 (성공한 확인만)."""
         out: dict[tuple[str, str], int] = {}
@@ -914,12 +998,17 @@ class Store:
         posts 에는 질문 정보 + ranks{source: 순위} + prev_ranks + views_per_day 가 들어간다.
         """
         now = now or now_kst()
-        sql = "SELECT * FROM exposure_checks"
-        args: list = []
-        if product:
-            sql += " WHERE product=?"
-            args.append(product)
-        sql += " ORDER BY id DESC LIMIT 5000"
+        # 검색어·검색 위치마다 가장 최근 확인 1건 + 성공한 최근 2건만 (한자 검색어처럼 며칠에 한 번 확인하는 것도 빠지지 않게)
+        only = "AND product=?" if product else ""
+        args = [product, product] if product else []
+        sql = f"""SELECT * FROM exposure_checks WHERE id IN (
+                    SELECT MAX(id) FROM exposure_checks WHERE 1=1 {only} GROUP BY product, keyword, source
+                    UNION ALL
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (PARTITION BY product, keyword, source ORDER BY id DESC) AS rn
+                        FROM exposure_checks WHERE COALESCE(error, '') = '' {only})
+                    WHERE rn <= 2)
+                  ORDER BY id DESC"""
         with self._conn() as c:
             checks = [dict(r) for r in c.execute(sql, args).fetchall()]
             # (product, keyword, source) 마다: 가장 최근 확인(오류 포함) + 성공한 최근 2회
@@ -1325,6 +1414,10 @@ def _migrate(c: sqlite3.Connection) -> None:
     if social_cols and "is_short" not in social_cols:
         c.execute("ALTER TABLE social_posts ADD COLUMN duration INTEGER")
         c.execute("ALTER TABLE social_posts ADD COLUMN is_short INTEGER")
+
+
+def _compact(s: str) -> str:
+    return "".join(str(s).split())
 
 
 def _row_to_dict(row: sqlite3.Row, json_keys: tuple[str, ...] = ("sources", "categories", "matches")) -> dict:

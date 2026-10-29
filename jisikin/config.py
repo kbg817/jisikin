@@ -127,6 +127,7 @@ class Settings:
     exposure_top_n: int = 5
     exposure_views_top_n: int = 10       # 지식iN 조회수순은 검색어마다 상위 몇 개까지 볼지
     exposure_sources: list[str] = field(default_factory=lambda: ["pc", "mobile", "kin", "views"])
+    hanja_per_run: int = 60              # 상위노출 확인 1번에 통합검색할 한자 검색어 수 (돌아가며). 0 이면 끔
     # 유튜브 · 쓰레드
     social_interval_hours: int = 8       # 자동 수집 주기(시간). 0 이면 끔
     social_max_age_days: int = 14        # (쓰레드) 이보다 오래된 글은 찾지 않고 할 일에서도 숨김
@@ -266,6 +267,7 @@ def parse_config(text: str) -> AppConfig:
     settings.request_delay_seconds = max(0.0, settings.request_delay_seconds)
     settings.exposure_top_n = max(1, min(settings.exposure_top_n, 20))
     settings.exposure_views_top_n = max(1, min(settings.exposure_views_top_n, 30))
+    settings.hanja_per_run = max(0, min(settings.hanja_per_run, 300))
     settings.social_interval_hours = max(0, settings.social_interval_hours)
     settings.social_max_age_days = max(1, min(settings.social_max_age_days, 365))
     settings.youtube_max_age_days = max(1, min(settings.youtube_max_age_days, 3650))

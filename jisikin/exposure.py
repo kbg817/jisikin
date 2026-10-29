@@ -5,6 +5,7 @@
 - mobile : 네이버 통합검색(모바일) 결과에 나온 지식iN 글 순서
 - kin    : 지식iN 탭 정확도순 상위 글
 - views  : 지식iN 검색 조회수순 상위 글 (예전에 올라와 지금까지 많이 읽힌 글)
+한자 검색어(예: 이슬 빛날 현)는 수가 많아 매번 일부만 돌아가며 통합검색(모바일·PC)에서 확인한다 (hanja.py).
 노출 중인 글은 조회수가 계속 늘어나므로, 옛날 글이라도 답변을 달면 효과가 크다.
 """
 from __future__ import annotations
@@ -14,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from .config import AppConfig, Product
+from .hanja import SOURCES as HANJA_SOURCES
 from .matcher import Matcher
 from .naver import NaverClient, NaverError
 from .searchad import compact
@@ -51,12 +53,14 @@ class ExposureSummary:
     posts: int = 0
     new_posts: int = 0
     details: int = 0
+    hanja: int = 0
     errors: list[str] = field(default_factory=list)
     seconds: float = 0.0
 
     def text(self) -> str:
+        hanja = f" + 한자 검색어 {self.hanja}개" if self.hanja else ""
         s = (
-            f"[상위노출] 검색어 {self.keywords}개, 확인 {self.checks}회, 노출 글 {self.posts}개 "
+            f"[상위노출] 검색어 {self.keywords}개{hanja}, 확인 {self.checks}회, 노출 글 {self.posts}개 "
             f"(처음 본 글 {self.new_posts}개), 조회수 갱신 {self.details}건, {self.seconds:.0f}초"
         )
         if self.errors:
@@ -74,8 +78,9 @@ def check_exposure(
     s = cfg.settings
     summary = ExposureSummary()
     targets = all_targets(cfg, store)
+    hanja = store.hanja_due(s.hanja_per_run)
     summary.keywords = len(targets)
-    if not targets:
+    if not targets and not hanja:
         return summary
     if client is None:
         from .collector import make_client  # 하루 API 호출 상한을 지키는 클라이언트
@@ -85,41 +90,69 @@ def check_exposure(
     exposed: list[str] = []  # 순위가 높은 글부터 (상세 갱신 우선순위)
     sources = list(s.exposure_sources)
     fails = 0
+
+    def check(product: Product, keyword: str, source: str) -> list[str] | None:
+        """한 검색어 × 검색 위치 확인 → 노출된 글 번호 (실패하면 None)."""
+        nonlocal fails
+        try:
+            if source == "kin":
+                items = client.search_kin_ranked(keyword, s.exposure_top_n)
+            elif source == "views":
+                items = client.search_kin_by_views(keyword, s.exposure_views_top_n)
+            else:
+                items = client.search_integrated(keyword, source)
+        except NaverError as e:
+            store.record_exposure(product.id, keyword, source, [], error=str(e))
+            summary.errors.append(f"'{keyword}' ({source}): {e}")
+            log(f"  ! '{keyword}' {source} 확인 실패: {e}")
+            if source == "kin" and client.credentials and (e.fatal or e.budget):
+                # API 문제(호출 상한·키 오류)는 지식iN탭 순위만 빼고, 통합검색 확인은 계속한다
+                sources.remove("kin")
+                summary.errors.append("이번 확인에서는 지식iN탭 순위를 건너뜁니다 (API 사용 불가).")
+                return None
+            fails += 1
+            if e.fatal or fails >= MAX_FAILS:
+                summary.errors.append(f"연속 {fails}번 실패해 이번 상위노출 확인을 중단합니다.")
+                fails = MAX_FAILS
+            return None
+        fails = 0
+        items = items[: s.exposure_views_top_n if source == "views" else s.exposure_top_n]
+        for rq in items:
+            if store.upsert_raw(rq, f"노출:{keyword}", feed=False):
+                summary.new_posts += 1
+        doc_ids = [rq.doc_id for rq in items]
+        store.record_exposure(product.id, keyword, source, doc_ids)
+        summary.checks += 1
+        exposed.extend(doc_ids)
+        return doc_ids
+
     try:
         for product, keyword in targets:
             if fails >= MAX_FAILS or not sources:
                 break
             for source in list(sources):
-                try:
-                    if source == "kin":
-                        items = client.search_kin_ranked(keyword, s.exposure_top_n)
-                    elif source == "views":
-                        items = client.search_kin_by_views(keyword, s.exposure_views_top_n)
-                    else:
-                        items = client.search_integrated(keyword, source)
-                except NaverError as e:
-                    store.record_exposure(product.id, keyword, source, [], error=str(e))
-                    summary.errors.append(f"'{keyword}' ({source}): {e}")
-                    log(f"  ! '{keyword}' {source} 확인 실패: {e}")
-                    if source == "kin" and client.credentials and (e.fatal or e.budget):
-                        # API 문제(호출 상한·키 오류)는 지식iN탭 순위만 빼고, 통합검색 확인은 계속한다
-                        sources.remove("kin")
-                        summary.errors.append("이번 확인에서는 지식iN탭 순위를 건너뜁니다 (API 사용 불가).")
-                        continue
-                    fails += 1
-                    if e.fatal or fails >= MAX_FAILS:
-                        summary.errors.append(f"연속 {fails}번 실패해 이번 상위노출 확인을 중단합니다.")
-                        fails = MAX_FAILS
-                        break
-                    continue
-                fails = 0
-                items = items[: s.exposure_views_top_n if source == "views" else s.exposure_top_n]
-                for rq in items:
-                    if store.upsert_raw(rq, f"노출:{keyword}", feed=False):
-                        summary.new_posts += 1
-                store.record_exposure(product.id, keyword, source, [rq.doc_id for rq in items])
-                summary.checks += 1
-                exposed.extend(rq.doc_id for rq in items)
+                check(product, keyword, source)
+                if fails >= MAX_FAILS:
+                    break
+
+        for row in hanja:
+            product = cfg.product(row["product"])
+            if fails >= MAX_FAILS:
+                break
+            if product is None:
+                continue
+            found: set[str] = set()
+            ok = False
+            for source in HANJA_SOURCES:
+                doc_ids = check(product, row["keyword"], source)
+                if doc_ids is not None:
+                    ok = True
+                    found.update(doc_ids)
+                if fails >= MAX_FAILS:
+                    break
+            if ok:
+                store.mark_hanja_checked(product.id, row["keyword"], len(found))
+                summary.hanja += 1
 
         unique = list(dict.fromkeys(exposed))
         summary.posts = len(unique)

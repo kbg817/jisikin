@@ -9,9 +9,10 @@ from . import __version__
 from . import config as config_mod
 from .collector import effective_interval, estimate_api_calls_per_day, make_client, resolve_mode
 from .config import AppConfig
-from .calc import calc_status, check_connection
+from .calc import CalcUnavailable, calc_status, check_connection, hanja_candidates
 from .drafter import ai_status
 from .exposure import all_targets
+from .hanja import SOURCES as HANJA_SOURCES
 from .naver import NaverClient, NaverError, debug_snippets
 from .searchad import SearchAdClient
 from .storage import ApiBudget, Store
@@ -129,6 +130,10 @@ def run_diagnostics(
         ok = False
         lines.append("     통합검색에서 지식iN 글을 하나도 못 찾았습니다. 위 '진단' 줄을 Claude 에게 보내주세요.")
 
+    hanja_products = [p for p in cfg.products if "hanja" in p.calc_tools]
+    if hanja_products:
+        lines += _hanja_search_check(client, store)
+
     # 검색어 자동 생성에 쓰는 자동완성 / 검색광고 API
     sample = (cfg.products[0].keywords or [cfg.products[0].name])[0]
     try:
@@ -161,10 +166,48 @@ def run_diagnostics(
             if not calc_ok:
                 ok = False
             lines.append(f"[{'OK' if calc_ok else '오류'}] 명연당 계산 ({', '.join(calc_products)} 초안): {calc_msg}")
+            if calc_ok and hanja_products:
+                lines.append(_hanja_dictionary_check(calc_session))
         else:
             lines.append(f"[--] 명연당 계산 ({', '.join(calc_products)} 초안): {calc_status()[1]}")
     lines += _kin_rank_check(client, store)
     return ok, lines
+
+
+HANJA_SAMPLE = "이슬빛날 현"
+
+
+def _hanja_search_check(client, store) -> list[str]:
+    """한자 검색어(예: 이슬빛날 현)로 통합검색에 뜨는 지식iN 글을 찾는지. 지식iN 글이 나왔던 검색어가 있으면 그것으로."""
+    keyword = HANJA_SAMPLE
+    if store is not None:
+        live = [r for r in store.hanja_keywords() if r["found"]]
+        if live:
+            keyword = max(live, key=lambda r: r["found"])["keyword"]
+    lines = []
+    for source in HANJA_SOURCES:
+        label = "통합검색 모바일" if source == "mobile" else "통합검색 PC"
+        try:
+            found = client.search_integrated(keyword, source)
+        except NaverError as e:
+            lines.append(f"[오류] 한자 검색어 '{keyword}' {label}: {e}")
+            continue
+        lines.append(f"[{'OK' if found else '??'}] 한자 검색어 '{keyword}' {label}: 지식iN 글 {len(found)}개")
+        for n, it in enumerate(found[:3], start=1):
+            lines.append(f"     {n}. {it.title}  ({it.url})")
+        if not found:
+            lines += _page_debug(client, f"한자 {label}", {"지식iN 링크": r"kin\.naver\.com", "지식iN 글자": r"지식iN"})
+    return lines
+
+
+def _hanja_dictionary_check(calc_session=None) -> str:
+    """[검색어 관리] > 한자 검색어: 음 '현' → 인명용 한자 뜻 검색어로 펼쳐지는지."""
+    try:
+        found = hanja_candidates("현", session=calc_session)
+    except (CalcUnavailable, ValueError) as e:
+        return f"[오류] 한자 검색어 만들기 (인명용 한자 사전): {e}"
+    sample = " / ".join(f"{h['meaning']} 현" for h in found[:4])
+    return f"[{'OK' if found else '??'}] 한자 검색어 만들기: '현' → 검색어 {len(found)}개 ({sample} …)"
 
 
 def _kin_rank_check(client, store) -> list[str]:

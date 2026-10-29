@@ -195,6 +195,17 @@ def run_tool(name: str, tool_input: dict, session=None) -> tuple[str, bool]:
     return json.dumps(result["data"], ensure_ascii=False, separators=(",", ":")), False
 
 
+def hanja_candidates(eum: str, session=None) -> list[dict]:
+    """음 한 글자 → 이름에 쓰는 인명용 한자 [{hanja, meaning, ...}] (거의 안 쓰는 한자는 뺌).
+
+    [검색어 관리] > 한자 검색어에서 '현' → '이슬 빛날 현', '밝을 현' … 으로 펼칠 때 쓴다.
+    """
+    result = _request("GET", "hanja", params={"eum": eum, "lastName": "false", "limit": 50}, session=session)
+    if "error" in result:
+        raise ValueError(result["error"])
+    return [h for h in result["data"] or [] if h.get("meaning") and not h.get("rarelyUsed")]
+
+
 def check_connection(session=None) -> tuple[bool, str]:
     """[연결 점검]용: 시험 사주 한 번 계산 (양력 1990-06-08 10:30 여 → 庚午 壬午 甲辰 己巳)."""
     ok, reason = calc_status()
